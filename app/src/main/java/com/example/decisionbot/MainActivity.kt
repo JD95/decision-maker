@@ -16,9 +16,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import androidx.room.Room
 import com.example.decisionbot.ui.theme.DecisionBotTheme
 import kotlinx.coroutines.launch
@@ -42,30 +45,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-
 @Composable
 fun MainComponent(dao: AppDao) {
-    val scope = rememberCoroutineScope()
-    // val navigation = remember { mutableStateOf<Navigation>(Navigation.SelectChoice()) }
     val navController = rememberNavController()
 
-    // val x = navigation.value
-    // when (x) {
-    //     is Navigation.Home -> { HomePage(dao, navigation) }
-    //     is Navigation.SelectChoice -> { SelectChoicePage(dao, navigation) }
-    //     is Navigation.EditChoice -> { EditChoicePage(dao, x.choice) }
-    //     is Navigation.AnswerQuestion -> { AnswerQuestionPage(dao, navigation) }
-    //     is Navigation.SeeResults -> { AnswerQuestionPage(dao, navigation) }
-    // }
-
     NavHost(navController = navController, startDestination = "home") {
-        composable("choices") { SelectChoicePage(dao) }
-
+        composable("home") { HomePage(navController) }
+        composable("choice/list") { ChoiceListPage(dao, navController) }
+        composable(
+            "choice/{choiceId}/edit",
+            arguments = listOf(navArgument("choiceId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            EditChoicePage(dao, backStackEntry.arguments?.getLong("choiceId")!!)
+        }
+        composable(
+            "choice/requirement/{requirementId}/edit",
+            arguments = listOf(navArgument("requirementId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            EditRequirementPage(dao, backStackEntry.arguments?.getLong("requirementId")!!)
+        }
+    }
+}
+@Composable
+fun HomePage(navController: NavController) {
+    Column {
+        Button(onClick = { navController.navigate("choice/list")}) {
+            Text(text = "Edit Choices")
+        }
+        Button(onClick = { }) {
+            Text(text = "Make Decision")
+        }
     }
 }
 
 @Composable
-fun SelectChoicePage(dao: AppDao, navigation: MutableState<Navigation>) {
+fun ChoiceListPage(dao: AppDao, navController: NavController) {
     val choices = remember { mutableStateOf<List<Choice>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
@@ -74,11 +88,15 @@ fun SelectChoicePage(dao: AppDao, navigation: MutableState<Navigation>) {
     }
 
     Column {
-        Text(text = "Modify Choices", fontSize = 25.sp)
+        Text(text = "Choices", fontSize = 25.sp)
 
         LazyColumn {
             items(choices.value) { choice ->
-                ModifyChoiceCard(choice, navigation)
+                Button(
+                    onClick = { navController.navigate("choice/${choice.id}/edit") }
+                ) {
+                    Text(text = choice.prompt)
+                }
             }
         }
 
@@ -92,6 +110,13 @@ fun SelectChoicePage(dao: AppDao, navigation: MutableState<Navigation>) {
             }) {
             Text(text = "Add Choice")
         }
+    }
+}
+
+@Composable
+fun EditRequirementPage(dao: AppDao, requirementId: Long) {
+    WithInit({ dao.getRequirement(requirementId) }) { requirement ->
+
     }
 }
 
@@ -112,56 +137,37 @@ fun AnswerQuestionPage(dao: AppDao, navigation: MutableState<Navigation>) {
 }
 
 @Composable
-fun HomePage(dao: AppDao, navigation: MutableState<Navigation>) {
-    TODO("Not yet implemented")
-}
-
-@Composable
-fun ModifyChoiceCard(choice: Choice, navigation: MutableState<Navigation>) {
-    Button(
-        onClick = { navigation.value = Navigation.EditChoice(choice) }
-    ) {
-        Text(text = choice.prompt)
+fun <S> WithInit(
+    init: suspend () -> S,
+    body: @Composable (MutableState<S>) -> Unit,
+) {
+    val slot = remember { mutableStateOf<S?>(null) }
+    LaunchedEffect(slot) {
+        slot.value = init()
+    }
+    if (slot.value != null) {
+        val st = remember { mutableStateOf<S>(slot.value!!) }
+        body(st)
     }
 }
 
 @Composable
-fun EditChoicePage(dao: AppDao, initChoice: Choice) {
-    val scope = rememberCoroutineScope()
-    val choice = remember { mutableStateOf(initChoice) }
-    val answers = remember { mutableStateOf<List<MutableState<Answer>>>(emptyList()) }
-    val requirements = remember { mutableStateOf<List<MutableState<Requirement>>>(emptyList()) }
+fun EditChoicePage(dao: AppDao, choiceId: Long) {
+    WithInit({ dao.getChoice(choiceId) }) {choice ->
 
-    LaunchedEffect(choice) {
-        dao.updateChoice(choice.value.id, choice.value.prompt)
-    }
-    LaunchedEffect(requirements) {
-        for(req in requirements.value) {
-            dao.updateRequirement(req.value.id, req.value.choice, req.value.answer)
+        LaunchedEffect(choice) {
+            dao.updateChoice(choice.value.id, choice.value.prompt)
         }
-    }
 
-    Column {
-        Text(text = "Prompt", fontSize = 25.sp)
-        TextField(
-            value = choice.value.prompt,
-            onValueChange = { it: String -> choice.value = choice.value.copy(prompt = it) }
-        )
-
-        ListAnswerSection(dao, choice)
-
-        ListElementSection(
-            "Requirements", requirements, scope,
-            { requirement, index -> RequirementField(requirement) {
-                scope.launch {
-                    dao.deleteRequirement(requirement.value.id)
-                }
-                deleteIndexFrom(requirements, index)
-            }},
-            {
-                mutableStateOf(PartialRequirement.Empty)
-            }
-        )
+        Column {
+            Text(text = "Prompt", fontSize = 25.sp)
+            TextField(
+                value = choice.value.prompt,
+                onValueChange = { it: String -> choice.value = choice.value.copy(prompt = it) }
+            )
+            ListAnswerSection(dao, choice)
+            ListRequirementsSection(dao, choice)
+        }
     }
 }
 
@@ -177,7 +183,6 @@ private fun <T> deleteIndexFrom(
 @Composable
 fun ListRequirementsSection(
     dao: AppDao,
-    navigation: MutableState<Navigation>,
     choice: MutableState<Choice>
 ) {
 
@@ -190,9 +195,9 @@ fun ListRequirementsSection(
     }
 
     ListElementSection(
-        "Answers", requirements,
+        "Requirements", requirements,
     ) { req, index ->
-        RequirementField(req, navigation) {
+        RequirementField(req) {
             scope.launch {
                 dao.deleteAnswer(req.value.id)
             }
@@ -202,10 +207,10 @@ fun ListRequirementsSection(
 
     Button(
         onClick = {
-            scope.launch {
-                val id = dao.insertAnswer(choice.value.id, "")
-                requirements.value = requirements.value.plus(mutableStateOf(Requirement(id, choice.value.id, "")))
-            }
+            // scope.launch {
+            //     val id = dao.insertAnswer(choice.value.id, "")
+            //     requirements.value = requirements.value.plus(mutableStateOf(Requirement(id, choice.value.id, "")))
+            // }
         },
         colors = ButtonDefaults.buttonColors(backgroundColor = Color.Green)
     ) {
@@ -216,19 +221,15 @@ fun ListRequirementsSection(
 @Composable
 fun RequirementField(
     requirement: MutableState<Requirement>,
-    navigation: MutableState<Navigation>,
     onDelete: () -> Unit,
 ) {
     Button(
         onClick = {
-            navigation.value = Navigation.EditRequirement(requirement)
+            // TODO Navigate to edit requirements page
         }
     ) {
         val x = requirement.value
-        when (x) {
-            is PartialRequirement.Empty -> Text(text = "New Requirement")
-            is PartialRequirement.WithChoice -> Text()
-        }
+        // TODO
     }
 }
 

@@ -98,9 +98,18 @@ interface AppDao {
 
     @Query(
         """
+            select *
+            from requirement
+            where id = :requirementId
+        """
+    )
+    suspend fun getRequirement(requirementId: Long): Requirement
+
+    @Query(
+        """
             update requirement
             set choice = :choiceId
-            set answer = :answerid
+              , answer = :answerId
             where id = :requirementId
         """
     )
