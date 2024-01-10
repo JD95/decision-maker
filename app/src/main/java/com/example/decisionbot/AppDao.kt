@@ -158,4 +158,15 @@ interface AppDao {
         """
     )
     suspend fun getResults(): List<Result>
+
+    @Query(
+        """
+            select r.id, r.choice, r.answer, c.prompt, a.description
+            from requirement r
+              join answer a on r.answer = a.id
+              join choice c on a.choice = c.id
+            where r.choice = :choiceId
+        """
+    )
+    suspend fun getRequirementBoxFor(choiceId: Long): List<RequirementBox>
 }
