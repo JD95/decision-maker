@@ -19,6 +19,7 @@ import com.ramcosta.composedestinations.DestinationsNavHost
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.manualcomposablecalls.composable
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -45,6 +46,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+fun mainEnv(dao: AppDao, navigator: DestinationsNavigator, scope: CoroutineScope) : MainEnv {
+    return MainEnv(
+        navigator = navigator,
+        updateChoice = { choice ->
+            scope.launch {
+                dao.updateChoice(choice.id, choice.prompt)
+            }
+        },
+        getAnswersFor = { x -> emptyList() },
+        editAnswer = { x -> Unit },
+        deleteAnswer = { x -> Unit },
+        getRequirementsFor = { x -> emptyList() },
+        editRequirement = { x -> Unit },
+        deleteRequirement = { x -> Unit }
+    )
+}
+
 suspend fun seedTestDb(dao: AppDao) {
     val stayInGoOut = dao.insertChoice("Stay in or go out?")
     val stayIn = dao.insertAnswer(stayInGoOut, "Stay in")
@@ -60,26 +78,22 @@ suspend fun seedTestDb(dao: AppDao) {
     dao.insertAnswer(movieOrAnime, "Anime")
     dao.insertRequirement(stayInGoOut, stayIn)
 }
+data class MainEnv(
+    val navigator: DestinationsNavigator,
+    val updateChoice: (Choice) -> Unit,
+    val getAnswersFor: (Choice) -> List<Answer>,
+    val editAnswer: (Answer) -> Unit,
+    val deleteAnswer: (Answer) -> Unit,
+    val getRequirementsFor: (Choice) -> List<RequirementBox>,
+    val editRequirement: (RequirementBox) -> Unit,
+    val deleteRequirement: (RequirementBox) -> Unit,
+)
 @Composable
 fun MainComponent(dao: AppDao) {
     val scope = rememberCoroutineScope()
     DestinationsNavHost(navGraph = NavGraphs.root) {
         composable(EditChoicePageDestination) {
-            EditChoicePage(
-                navigator = destinationsNavigator,
-                choice = navArgs.choice,
-                updateChoice = { choice ->
-                    scope.launch {
-                        dao.updateChoice(choice.id, choice.prompt)
-                    }
-                },
-                getAnswersFor = { x -> emptyList() },
-                editAnswer = { x -> Unit },
-                deleteAnswer = { x -> Unit },
-                getRequirementsFor = {x -> emptyList() },
-                editRequirement = { x -> Unit },
-                deleteRequirement = { x -> Unit },
-            )
+            EditChoicePage(navArgs.choice, mainEnv(dao, destinationsNavigator, scope))
         }
     }
 }
@@ -151,37 +165,30 @@ fun AnswerQuestionPage(
 @Destination
 @Composable
 fun EditChoicePage(
-    navigator: DestinationsNavigator,
     choice: Choice,
-    updateChoice: (Choice) -> Unit,
-    getAnswersFor: (Choice) -> List<Answer>,
-    editAnswer: (Answer) -> Unit,
-    deleteAnswer: (Answer) -> Unit,
-    getRequirementsFor: (Choice) -> List<RequirementBox>,
-    editRequirement: (RequirementBox) -> Unit,
-    deleteRequirement: (RequirementBox) -> Unit,
+    env: MainEnv,
 ) {
   Column {
       Text(text = "Prompt", fontSize = 25.sp)
       TextField(
           value = choice.prompt,
-          onValueChange = { it: String -> updateChoice(choice.copy(prompt = it)) }
+          onValueChange = { it: String -> env.updateChoice(choice.copy(prompt = it)) }
       )
 
       Text(text = "Answers", fontSize = 25.sp)
       EditDeleteBoxList(
-          getAnswersFor(choice),
-          editAnswer,
-          deleteAnswer
+          env.getAnswersFor(choice),
+          env.editAnswer,
+          env.deleteAnswer
       ) { answer ->
           Text(text = answer.description)
       }
 
       Text(text = "Requirements", fontSize = 25.sp)
       EditDeleteBoxList(
-          getRequirementsFor(choice),
-          editRequirement,
-          deleteRequirement
+          env.getRequirementsFor(choice),
+          env.editRequirement,
+          env.deleteRequirement
       ) { requirement ->
           Text(text = requirement.prompt)
           Text(text = requirement.description)
