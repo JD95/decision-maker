@@ -1,6 +1,7 @@
 package com.example.decisionbot
 
 import androidx.compose.runtime.MutableState
+import com.example.decisionbot.repository.entity.Choice
 
 sealed class Navigation {
     class Home : Navigation()

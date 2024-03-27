@@ -1,6 +1,11 @@
 package com.example.decisionbot
 
 import androidx.room.Query
+import com.example.decisionbot.repository.entity.Answer
+import com.example.decisionbot.repository.entity.Choice
+import com.example.decisionbot.repository.entity.Requirement
+import com.example.decisionbot.repository.entity.RequirementBox
+import com.example.decisionbot.repository.entity.Result
 
 @androidx.room.Dao
 interface AppDao {
@@ -62,6 +67,14 @@ interface AppDao {
         """
     )
     suspend fun updateChoice(choiceId: Long, prompt: String)
+
+    @Query(
+        """
+            delete from choice
+            where id = :choiceId
+        """
+    )
+    suspend fun deleteChoice(choiceId: Long)
 
     @Query(
         """

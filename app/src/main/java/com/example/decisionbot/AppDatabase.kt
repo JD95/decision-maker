@@ -2,6 +2,7 @@ package com.example.decisionbot
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import com.example.decisionbot.repository.entity.*
 
 @Database(
     entities = [
