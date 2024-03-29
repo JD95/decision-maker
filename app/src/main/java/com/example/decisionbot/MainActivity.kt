@@ -1,6 +1,7 @@
 package com.example.decisionbot
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -11,9 +12,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.example.decisionbot.destinations.ChoiceListPageDestination
 import com.example.decisionbot.destinations.EditChoicePageDestination
+import com.example.decisionbot.destinations.HomePageDestination
 import com.example.decisionbot.repository.entity.Answer
 import com.example.decisionbot.repository.entity.Choice
 import com.example.decisionbot.repository.entity.RequirementBox
@@ -32,7 +37,10 @@ class MainActivity : ComponentActivity() {
         val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "data.db")
             .build()
         val dao = db.dao()
-
+        Log.i("startup", "Starting up app!")
+        this.lifecycleScope.launch {
+            seedTestDb(dao)
+        }
         setContent {
             DecisionBotTheme {
                 // A surface container using the 'background' color from the theme
@@ -40,9 +48,6 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colors.background
                 ) {
-                    LaunchedEffect(Unit) {
-                        seedTestDb(dao)
-                    }
                     MainComponent(dao)
                 }
             }
@@ -50,29 +55,55 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class MainEnv(
-    val navigator: DestinationsNavigator,
-    val dbGetAllChoices: @Composable () -> State<List<Choice>>,
-    val choiceDbCrud: DbCrud<Long, Choice>,
-    val answerDbCrud: DbCrud<Choice, Answer>,
-    val requirementBoxDbCrud: DbCrud<Choice, RequirementBox>,
+data class NavigationEnv(
+    val gotoHomePage: () -> Unit,
+    val gotoChoiceListPage: () -> Unit,
+    val gotoEditChoicePage: (Choice) -> Unit,
 )
 
-data class DbCrud<Key, T>(
+data class MainEnv(
+    val navigator: NavigationEnv,
+    val repo: Repo,
+)
+
+data class Repo(
+    val dbGetAllChoices: suspend (MutableState<List<Choice>>) -> Unit,
+    val insertChoice: suspend (String, MutableState<List<Choice>>) -> Unit,
+    val choiceCrud: Crud<Long, Choice>,
+    val answerCrud: Crud<Choice, Answer>,
+    val requirementBoxCrud: Crud<Choice, RequirementBox>,
+)
+
+data class Crud<Key, T>(
     val getAssociated: @Composable (Key) -> State<List<T>>,
     val edit: (T) -> Unit,
     val delete: (T) -> Unit
 )
 
-fun mainEnv(dao: AppDao, navigator: DestinationsNavigator, scope: CoroutineScope) : MainEnv {
-    return MainEnv(
-        navigator = navigator,
-        dbGetAllChoices = {
-            produceState(emptyList()) {
-                value = dao.getAllChoices()
-            }
+fun navEnv(navigator: DestinationsNavigator): NavigationEnv {
+    return NavigationEnv(
+        gotoEditChoicePage = { navigator.navigate(EditChoicePageDestination(it)) },
+        gotoChoiceListPage = { navigator.navigate(ChoiceListPageDestination()) },
+        gotoHomePage = { navigator.navigate(HomePageDestination()) },
+    )
+}
+
+fun makeRepo (
+    dao: AppDao,
+    scope: CoroutineScope
+) : Repo {
+    return Repo(
+        dbGetAllChoices = { value ->
+            Log.i("repo", "Getting all choices")
+            val result = dao.getAllChoices()
+            Log.i("repo", "There are ${result.size} choices!")
+            value.value = result
         },
-        choiceDbCrud = DbCrud(
+        insertChoice = { prompt, st ->
+            val id = dao.insertChoice(prompt)
+            st.value = st.value.plus(Choice(id, prompt))
+        },
+        choiceCrud = Crud(
             getAssociated = { id ->
                 produceState(emptyList()) {
                     value = listOf(dao.getChoice(id))
@@ -81,7 +112,7 @@ fun mainEnv(dao: AppDao, navigator: DestinationsNavigator, scope: CoroutineScope
             edit = { x -> scope.launch { dao.updateChoice(x.id, x.prompt) }},
             delete = { x -> scope.launch { dao.deleteChoice(x.id) } }
         ),
-        answerDbCrud = DbCrud(
+        answerCrud = Crud(
             getAssociated = { choice ->
                 produceState(emptyList()) {
                     value = dao.getAnswersFor(choice.id)
@@ -90,7 +121,7 @@ fun mainEnv(dao: AppDao, navigator: DestinationsNavigator, scope: CoroutineScope
             edit = { x -> scope.launch { dao.updateAnswer(x.id, x.description) } },
             delete = { x -> scope.launch { dao.deleteAnswer(x.id) }}
         ),
-        requirementBoxDbCrud = DbCrud(
+        requirementBoxCrud = Crud(
             getAssociated = { x ->
                 produceState(emptyList()) {
                     value = dao.getRequirementBoxFor(x.id)
@@ -103,6 +134,7 @@ fun mainEnv(dao: AppDao, navigator: DestinationsNavigator, scope: CoroutineScope
 }
 
 suspend fun seedTestDb(dao: AppDao) {
+    Log.i("startup", "Seeding database!")
     val stayInGoOut = dao.insertChoice("Stay in or go out?")
     val stayIn = dao.insertAnswer(stayInGoOut, "Stay in")
     val goOut = dao.insertAnswer(stayInGoOut, "Go out")
@@ -121,27 +153,45 @@ suspend fun seedTestDb(dao: AppDao) {
 fun MainComponent(dao: AppDao) {
     val scope = rememberCoroutineScope()
     DestinationsNavHost(navGraph = NavGraphs.root) {
+        composable(HomePageDestination) {
+            HomePage(navEnv(destinationsNavigator))
+        }
         composable(EditChoicePageDestination) {
-            val env = mainEnv(dao, destinationsNavigator, scope)
+            val env = makeRepo(dao, scope)
             EditChoicePage(navArgs.choice, env)
         }
         composable(ChoiceListPageDestination) {
-            val env = mainEnv(dao, destinationsNavigator, scope)
-            ChoiceListPage(
-                ChoiceListEnv(
-                    destinationsNavigator,
-                    getAllChoices = { env.dbGetAllChoices().value },
-                    insertNewChoice = { x -> throw Exception("todo") }
-                )
-            )
+            ChoiceListPage(makeChoiceListViewModel(dao, navEnv(destinationsNavigator)))
         }
     }
 }
+
+fun makeChoiceListViewModel(dao: AppDao, navEnv: NavigationEnv): ChoiceListViewModel {
+   return  object: ChoiceListViewModel() {
+       override fun fillWithCurrentChoices() {
+           viewModelScope.launch {
+               choicesMut.value = dao.getAllChoices()
+           }
+       }
+
+       override fun insertNewChoice(prompt: String) {
+           viewModelScope.launch {
+               val id = dao.insertChoice(prompt)
+               choicesMut.value = choices.value.plus(Choice(id, prompt))
+           }
+       }
+
+       override fun gotoEditChoicePage(choice: Choice) {
+           navEnv.gotoEditChoicePage(choice)
+       }
+   }
+}
+
 @Composable
 @Destination(start = true)
-fun HomePage(navigator: DestinationsNavigator) {
+fun HomePage(nav: NavigationEnv) {
     Column {
-        Button(onClick = { navigator.navigate(ChoiceListPageDestination())}) {
+        Button(onClick = { nav.gotoChoiceListPage() }) {
             Text(text = "Edit Choices")
         }
         Button(onClick = { }) {
@@ -150,41 +200,32 @@ fun HomePage(navigator: DestinationsNavigator) {
     }
 }
 
-data class ChoiceListEnv(
-    val navigator: DestinationsNavigator,
-    val getAllChoices: @Composable () -> List<Choice>,
-    val insertNewChoice: (String) -> Choice
-)
+abstract class ChoiceListViewModel : ViewModel()  {
+    protected val choicesMut = mutableStateOf(emptyList<Choice>())
+    val choices: State<List<Choice>> = choicesMut
+    abstract fun fillWithCurrentChoices()
+    abstract fun insertNewChoice(prompt: String)
+    abstract fun gotoEditChoicePage(choice: Choice)
+}
 
 @Composable
 @Destination
-fun ChoiceListPage(
-    env: ChoiceListEnv
-) {
-    val initChoices = env.getAllChoices()
-    val choices = remember { mutableStateOf(initChoices) }
-    val scope = rememberCoroutineScope()
-
+fun ChoiceListPage(st: ChoiceListViewModel)  {
+    st.fillWithCurrentChoices()
     Column {
         Text(text = "Choices", fontSize = 25.sp)
 
         LazyColumn {
-            items(choices.value) { choice ->
+            items(st.choices.value) { choice ->
                 Button(
-                    onClick = { env.navigator.navigate(EditChoicePageDestination(choice)) }
+                    onClick = { st.gotoEditChoicePage(choice) }
                 ) {
                     Text(text = choice.prompt)
                 }
             }
         }
 
-        Button(
-            onClick = {
-                scope.launch {
-                    val prompt = "New Choice!"
-                    choices.value = choices.value.plus(env.insertNewChoice(prompt))
-                }
-            }) {
+        Button(onClick = { st.insertNewChoice("New Choice!") }) {
             Text(text = "Add Choice")
         }
     }
@@ -211,22 +252,22 @@ fun AnswerQuestionPage(
 @Composable
 fun EditChoicePage(
     choice: Choice,
-    env: MainEnv,
+    env: Repo,
 ) {
   Column {
       Text(text = "Prompt", fontSize = 25.sp)
       TextField(
           value = choice.prompt,
-          onValueChange = { it: String -> env.choiceDbCrud.edit(choice.copy(prompt = it)) }
+          onValueChange = { it: String -> env.choiceCrud.edit(choice.copy(prompt = it)) }
       )
 
       Text(text = "Answers", fontSize = 25.sp)
-      EditDeleteBoxList(choice, env.answerDbCrud) { answer ->
+      EditDeleteBoxList(choice, env.answerCrud) { answer ->
           Text(text = answer.description)
       }
 
       Text(text = "Requirements", fontSize = 25.sp)
-      EditDeleteBoxList(choice, env.requirementBoxDbCrud) { requirement ->
+      EditDeleteBoxList(choice, env.requirementBoxCrud) { requirement ->
           Text(text = requirement.prompt)
           Text(text = requirement.description)
       }
@@ -236,7 +277,7 @@ fun EditChoicePage(
 @Composable
 fun <Key, Item> EditDeleteBoxList(
     choice: Key,
-    updater: DbCrud<Key, Item>,
+    updater: Crud<Key, Item>,
     displayItem: @Composable (Item) -> Unit,
 ) {
     val stuff = updater.getAssociated(choice).value
