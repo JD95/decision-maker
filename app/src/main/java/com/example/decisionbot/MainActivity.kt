@@ -16,6 +16,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
+import com.example.decisionbot.destinations.AnswerQuestionPageDestination
 import com.example.decisionbot.destinations.ChoiceListPageDestination
 import com.example.decisionbot.destinations.EditChoicePageDestination
 import com.example.decisionbot.destinations.HomePageDestination
@@ -55,17 +56,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class NavigationEnv(
-    val gotoHomePage: () -> Unit,
-    val gotoChoiceListPage: () -> Unit,
-    val gotoEditChoicePage: (Choice) -> Unit,
-)
-
-data class MainEnv(
-    val navigator: NavigationEnv,
-    val repo: Repo,
-)
-
 data class Repo(
     val dbGetAllChoices: suspend (MutableState<List<Choice>>) -> Unit,
     val insertChoice: suspend (String, MutableState<List<Choice>>) -> Unit,
@@ -79,14 +69,6 @@ data class Crud<Key, T>(
     val edit: (T) -> Unit,
     val delete: (T) -> Unit
 )
-
-fun navEnv(navigator: DestinationsNavigator): NavigationEnv {
-    return NavigationEnv(
-        gotoEditChoicePage = { navigator.navigate(EditChoicePageDestination(it)) },
-        gotoChoiceListPage = { navigator.navigate(ChoiceListPageDestination()) },
-        gotoHomePage = { navigator.navigate(HomePageDestination()) },
-    )
-}
 
 fun makeRepo (
     dao: AppDao,
@@ -149,25 +131,51 @@ suspend fun seedTestDb(dao: AppDao) {
     dao.insertAnswer(movieOrAnime, "Anime")
     dao.insertRequirement(stayInGoOut, stayIn)
 }
+
 @Composable
 fun MainComponent(dao: AppDao) {
     val scope = rememberCoroutineScope()
     DestinationsNavHost(navGraph = NavGraphs.root) {
         composable(HomePageDestination) {
-            HomePage(navEnv(destinationsNavigator))
+            HomePage(
+                { destinationsNavigator.navigate(ChoiceListPageDestination) },
+                { destinationsNavigator.navigate(AnswerQuestionPageDestination) }
+            )
         }
         composable(EditChoicePageDestination) {
             val env = makeRepo(dao, scope)
             EditChoicePage(navArgs.choice, env)
         }
         composable(ChoiceListPageDestination) {
-            ChoiceListPage(makeChoiceListViewModel(dao, navEnv(destinationsNavigator)))
+            ChoiceListPage(makeChoiceListViewModel(dao, destinationsNavigator))
+        }
+        composable(AnswerQuestionPageDestination) {
+            AnswerQuestionPage(object: AnswerQuestionPageViewModel() {
+                override fun setupNextQuestion() {
+                    viewModelScope.launch {
+                        val results = dao.getNextChoice()
+                        if (results.isNotEmpty()) {
+                            val x = results[0]
+                            _choice.value = x
+                            _answers.value = dao.getAnswersFor(x.id)
+                        }
+                    }
+                }
+
+                override fun getResults(): State<List<Result>> {
+                    viewModelScope.launch {
+                        _results.value = dao.getResults()
+                    }
+                    return _results
+                }
+
+            })
         }
     }
 }
 
-fun makeChoiceListViewModel(dao: AppDao, navEnv: NavigationEnv): ChoiceListViewModel {
-   return  object: ChoiceListViewModel() {
+fun makeChoiceListViewModel(dao: AppDao, nav: DestinationsNavigator): ChoiceListViewModel {
+   return object: ChoiceListViewModel() {
        override fun fillWithCurrentChoices() {
            viewModelScope.launch {
                choicesMut.value = dao.getAllChoices()
@@ -182,19 +190,22 @@ fun makeChoiceListViewModel(dao: AppDao, navEnv: NavigationEnv): ChoiceListViewM
        }
 
        override fun gotoEditChoicePage(choice: Choice) {
-           navEnv.gotoEditChoicePage(choice)
+           nav.navigate(EditChoicePageDestination(choice))
        }
    }
 }
 
 @Composable
 @Destination(start = true)
-fun HomePage(nav: NavigationEnv) {
+fun HomePage(
+    gotoChoiceListPage: () -> Unit,
+    gotoDecisionPage: () -> Unit
+) {
     Column {
-        Button(onClick = { nav.gotoChoiceListPage() }) {
+        Button(onClick = { gotoChoiceListPage() }) {
             Text(text = "Edit Choices")
         }
-        Button(onClick = { }) {
+        Button(onClick = { gotoDecisionPage() }) {
             Text(text = "Make Decision")
         }
     }
@@ -230,20 +241,29 @@ fun ChoiceListPage(st: ChoiceListViewModel)  {
         }
     }
 }
+
+abstract class AnswerQuestionPageViewModel : ViewModel() {
+    protected val _choice: MutableState<Choice?> = mutableStateOf(null)
+    protected val _answers: MutableState<List<Answer>> = mutableStateOf(emptyList())
+    protected val _results: MutableState<List<Result>> = mutableStateOf(emptyList())
+
+    val choice: State<Choice?> = _choice
+    val answers: State<List<Answer>> = _answers
+
+    abstract fun setupNextQuestion()
+    abstract fun getResults(): State<List<Result>>
+}
+
 @Composable
-fun AnswerQuestionPage(
-    navigation: MutableState<Navigation>,
-    getNextChoice: () -> Choice,
-    getAnswersFor: (Choice) -> List<Answer>,
-    getResults: () -> List<Result>,
-) {
-    val choice = remember { mutableStateOf(listOf(getNextChoice())) }
+@Destination
+fun AnswerQuestionPage(st: AnswerQuestionPageViewModel) {
+    st.setupNextQuestion()
     Column {
         Text(text = "Decision Bot", fontSize = 30.sp)
-        if (choice.value.isNotEmpty()) {
-            ChoiceForm(choice.value[0], getAnswersFor)
+        if (st.choice.value != null) {
+            ChoiceForm(st.choice.value!!, st.answers.value)
         } else {
-            ResultsList(getResults)
+            ResultsList(st.getResults().value)
         }
     }
 }
@@ -295,14 +315,14 @@ fun <Key, Item> EditDeleteBoxList(
         }
     }
 }
+
 @Composable
-fun ChoiceForm(choice: Choice, getAnswersFor: (Choice) -> List<Answer>) {
-    val answers = remember { mutableStateOf(getAnswersFor(choice)) }
+fun ChoiceForm(choice: Choice, answers: List<Answer>) {
     Text(text = choice.prompt)
     Column {
         Text("Options:")
         LazyColumn {
-            items(answers.value) { answer ->
+            items(answers) { answer ->
                 AnswerField(answer)
             }
         }
@@ -315,13 +335,12 @@ fun AnswerField(answer: Answer) {
 }
 
 @Composable
-fun ResultsList(getResults: () -> List<Result>) {
+fun ResultsList(decisions: List<Result>) {
     Text(text = "Your decision has been made!", fontSize = 25.sp)
-    val decisions = remember { mutableStateOf(getResults()) }
     Column {
         Text("Decisions:", fontSize = 20.sp)
         LazyColumn {
-            items(decisions.value) { result ->
+            items(decisions) { result ->
                 ResultDisplay(result)
             }
         }
