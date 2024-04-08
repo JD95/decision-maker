@@ -134,7 +134,6 @@ suspend fun seedTestDb(dao: AppDao) {
 
 @Composable
 fun MainComponent(dao: AppDao) {
-    val scope = rememberCoroutineScope()
     DestinationsNavHost(navGraph = NavGraphs.root) {
         composable(HomePageDestination) {
             HomePage(
@@ -143,8 +142,21 @@ fun MainComponent(dao: AppDao) {
             )
         }
         composable(EditChoicePageDestination) {
-            val env = makeRepo(dao, scope)
-            EditChoicePage(navArgs.choice, env)
+            EditChoicePage(object: EditChoicePageViewModel(navArgs.choice) {
+                val repo = makeRepo(dao, viewModelScope)
+
+                override val answerCrud: Crud<Choice, Answer>
+                    get() = repo.answerCrud
+                override val requirementBoxCrud: Crud<Choice, RequirementBox>
+                    get() = repo.requirementBoxCrud
+
+                override fun updateChoicePrompt(prompt: String) {
+                    viewModelScope.launch {
+                        dao.updateChoice(choice.value.id, prompt)
+                        choiceMut.value = choice.value.copy(prompt = prompt)
+                    }
+                }
+            })
         }
         composable(ChoiceListPageDestination) {
             ChoiceListPage(makeChoiceListViewModel(dao, destinationsNavigator))
@@ -156,17 +168,17 @@ fun MainComponent(dao: AppDao) {
                         val results = dao.getNextChoice()
                         if (results.isNotEmpty()) {
                             val x = results[0]
-                            _choice.value = x
-                            _answers.value = dao.getAnswersFor(x.id)
+                            choiceMut.value = x
+                            answersMut.value = dao.getAnswersFor(x.id)
                         }
                     }
                 }
 
                 override fun getResults(): State<List<Result>> {
                     viewModelScope.launch {
-                        _results.value = dao.getResults()
+                        resultsMut.value = dao.getResults()
                     }
-                    return _results
+                    return resultsMut
                 }
 
             })
@@ -243,12 +255,12 @@ fun ChoiceListPage(st: ChoiceListViewModel)  {
 }
 
 abstract class AnswerQuestionPageViewModel : ViewModel() {
-    protected val _choice: MutableState<Choice?> = mutableStateOf(null)
-    protected val _answers: MutableState<List<Answer>> = mutableStateOf(emptyList())
-    protected val _results: MutableState<List<Result>> = mutableStateOf(emptyList())
+    protected val choiceMut: MutableState<Choice?> = mutableStateOf(null)
+    protected val answersMut: MutableState<List<Answer>> = mutableStateOf(emptyList())
+    protected val resultsMut: MutableState<List<Result>> = mutableStateOf(emptyList())
 
-    val choice: State<Choice?> = _choice
-    val answers: State<List<Answer>> = _answers
+    val choice: State<Choice?> = choiceMut
+    val answers: State<List<Answer>> = answersMut
 
     abstract fun setupNextQuestion()
     abstract fun getResults(): State<List<Result>>
@@ -268,26 +280,40 @@ fun AnswerQuestionPage(st: AnswerQuestionPageViewModel) {
     }
 }
 
-@Destination
+abstract class EditChoicePageViewModel(choice: Choice) : ViewModel() {
+    protected val choiceMut: MutableState<Choice> = mutableStateOf(choice)
+
+    val choice: State<Choice> = choiceMut
+
+    abstract val answerCrud: Crud<Choice, Answer>
+    abstract val requirementBoxCrud: Crud<Choice, RequirementBox>
+
+    abstract fun updateChoicePrompt(prompt: String)
+}
+
+data class EditChoicePageNavArgs(
+    val choice: Choice
+)
+
+@Destination(navArgsDelegate = EditChoicePageNavArgs::class)
 @Composable
 fun EditChoicePage(
-    choice: Choice,
-    env: Repo,
+    st: EditChoicePageViewModel
 ) {
   Column {
       Text(text = "Prompt", fontSize = 25.sp)
       TextField(
-          value = choice.prompt,
-          onValueChange = { it: String -> env.choiceCrud.edit(choice.copy(prompt = it)) }
+          value = st.choice.value.prompt,
+          onValueChange = { st.updateChoicePrompt(it) }
       )
 
       Text(text = "Answers", fontSize = 25.sp)
-      EditDeleteBoxList(choice, env.answerCrud) { answer ->
+      EditDeleteBoxList(st.choice.value, st.answerCrud) { answer ->
           Text(text = answer.description)
       }
 
       Text(text = "Requirements", fontSize = 25.sp)
-      EditDeleteBoxList(choice, env.requirementBoxCrud) { requirement ->
+      EditDeleteBoxList(st.choice.value, st.requirementBoxCrud) { requirement ->
           Text(text = requirement.prompt)
           Text(text = requirement.description)
       }
@@ -296,11 +322,11 @@ fun EditChoicePage(
 
 @Composable
 fun <Key, Item> EditDeleteBoxList(
-    choice: Key,
+    key: Key,
     updater: Crud<Key, Item>,
     displayItem: @Composable (Item) -> Unit,
 ) {
-    val stuff = updater.getAssociated(choice).value
+    val stuff = updater.getAssociated(key).value
     LazyColumn {
         items(stuff) { item ->
             Box {
