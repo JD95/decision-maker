@@ -1,4 +1,4 @@
-package com.example.decisionbot
+package com.example.decisionbot.repository
 
 import androidx.room.Query
 import com.example.decisionbot.repository.entity.Answer
@@ -152,15 +152,6 @@ interface AppDao {
         """
     )
     suspend fun getAnswersFor(choiceId: Long): List<Answer>
-
-    @Query(
-        """
-            select *
-            from requirement
-            where requirement.choice = :choiceId
-        """
-    )
-    suspend fun getRequirementsFor(choiceId: Long): List<Requirement>
 
     @Query(
         """

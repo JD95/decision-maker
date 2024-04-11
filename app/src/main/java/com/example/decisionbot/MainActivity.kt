@@ -20,6 +20,9 @@ import com.example.decisionbot.destinations.AnswerQuestionPageDestination
 import com.example.decisionbot.destinations.ChoiceListPageDestination
 import com.example.decisionbot.destinations.EditChoicePageDestination
 import com.example.decisionbot.destinations.HomePageDestination
+import com.example.decisionbot.repository.AppDao
+import com.example.decisionbot.repository.AppDatabase
+import com.example.decisionbot.repository.AppRepository
 import com.example.decisionbot.repository.entity.Answer
 import com.example.decisionbot.repository.entity.Choice
 import com.example.decisionbot.repository.entity.RequirementBox
@@ -49,20 +52,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colors.background
                 ) {
-                    MainComponent(dao)
+                    MainComponent(AppRepository(dao))
                 }
             }
         }
     }
 }
-
-data class Repo(
-    val dbGetAllChoices: suspend (MutableState<List<Choice>>) -> Unit,
-    val insertChoice: suspend (String, MutableState<List<Choice>>) -> Unit,
-    val choiceCrud: Crud<Long, Choice>,
-    val answerCrud: Crud<Choice, Answer>,
-    val requirementBoxCrud: Crud<Choice, RequirementBox>,
-)
 
 data class Crud<Key, T>(
     val getAssociated: @Composable (Key) -> State<List<T>>,
@@ -70,50 +65,6 @@ data class Crud<Key, T>(
     val delete: (T) -> Unit
 )
 
-fun makeRepo (
-    dao: AppDao,
-    scope: CoroutineScope
-) : Repo {
-    return Repo(
-        dbGetAllChoices = { value ->
-            Log.i("repo", "Getting all choices")
-            val result = dao.getAllChoices()
-            Log.i("repo", "There are ${result.size} choices!")
-            value.value = result
-        },
-        insertChoice = { prompt, st ->
-            val id = dao.insertChoice(prompt)
-            st.value = st.value.plus(Choice(id, prompt))
-        },
-        choiceCrud = Crud(
-            getAssociated = { id ->
-                produceState(emptyList()) {
-                    value = listOf(dao.getChoice(id))
-                }
-            },
-            edit = { x -> scope.launch { dao.updateChoice(x.id, x.prompt) }},
-            delete = { x -> scope.launch { dao.deleteChoice(x.id) } }
-        ),
-        answerCrud = Crud(
-            getAssociated = { choice ->
-                produceState(emptyList()) {
-                    value = dao.getAnswersFor(choice.id)
-                }
-            },
-            edit = { x -> scope.launch { dao.updateAnswer(x.id, x.description) } },
-            delete = { x -> scope.launch { dao.deleteAnswer(x.id) }}
-        ),
-        requirementBoxCrud = Crud(
-            getAssociated = { x ->
-                produceState(emptyList()) {
-                    value = dao.getRequirementBoxFor(x.id)
-                }
-            },
-            edit = { x -> scope.launch { dao.updateRequirement(x.id, x.choice, x.answer) } },
-            delete = { x -> scope.launch { dao.deleteRequirement(x.id) } }
-        ),
-    )
-}
 
 suspend fun seedTestDb(dao: AppDao) {
     Log.i("startup", "Seeding database!")
@@ -132,8 +83,33 @@ suspend fun seedTestDb(dao: AppDao) {
     dao.insertRequirement(stayInGoOut, stayIn)
 }
 
+fun <K, T> makeCrud(
+    scope: CoroutineScope,
+    get: suspend (K) -> List<T>,
+    edit: suspend (T) -> Unit,
+    delete: suspend (T) -> Unit,
+): Crud<K, T>  {
+    return Crud(
+        getAssociated = {
+            produceState(emptyList()) {
+                value = get(it)
+            }
+        },
+        edit = {
+            scope.launch {
+                edit(it)
+            }
+        },
+        delete = {
+            scope.launch {
+                delete(it)
+            }
+        }
+    )
+}
+
 @Composable
-fun MainComponent(dao: AppDao) {
+fun MainComponent(repo: AppRepository) {
     DestinationsNavHost(navGraph = NavGraphs.root) {
         composable(HomePageDestination) {
             HomePage(
@@ -143,40 +119,50 @@ fun MainComponent(dao: AppDao) {
         }
         composable(EditChoicePageDestination) {
             EditChoicePage(object: EditChoicePageViewModel(navArgs.choice) {
-                val repo = makeRepo(dao, viewModelScope)
 
                 override val answerCrud: Crud<Choice, Answer>
-                    get() = repo.answerCrud
+                    get() = makeCrud(
+                        viewModelScope,
+                        repo::getAnswersForChoice,
+                        repo::editAnswer,
+                        repo::deleteAnswer
+                    )
+
                 override val requirementBoxCrud: Crud<Choice, RequirementBox>
-                    get() = repo.requirementBoxCrud
+                    get() = makeCrud(
+                        viewModelScope,
+                        repo::getRequirementBoxInfoFor,
+                        repo::editRequirementBox,
+                        repo::deleteRequirementBox
+                    )
 
                 override fun updateChoicePrompt(prompt: String) {
                     viewModelScope.launch {
-                        dao.updateChoice(choice.value.id, prompt)
-                        choiceMut.value = choice.value.copy(prompt = prompt)
+                        val updatedChoice = choice.value.copy(prompt = prompt)
+                        repo.editChoice(updatedChoice)
+                        choiceMut.value = updatedChoice
                     }
                 }
             })
         }
         composable(ChoiceListPageDestination) {
-            ChoiceListPage(makeChoiceListViewModel(dao, destinationsNavigator))
+            ChoiceListPage(makeChoiceListViewModel(repo, destinationsNavigator))
         }
         composable(AnswerQuestionPageDestination) {
             AnswerQuestionPage(object: AnswerQuestionPageViewModel() {
                 override fun setupNextQuestion() {
                     viewModelScope.launch {
-                        val results = dao.getNextChoice()
-                        if (results.isNotEmpty()) {
-                            val x = results[0]
-                            choiceMut.value = x
-                            answersMut.value = dao.getAnswersFor(x.id)
+                        val result = repo.getNextChoiceForDecision()
+                        if (result != null) {
+                            choiceMut.value = result
+                            answersMut.value = repo.getAnswersForChoice(result)
                         }
                     }
                 }
 
                 override fun getResults(): State<List<Result>> {
                     viewModelScope.launch {
-                        resultsMut.value = dao.getResults()
+                        resultsMut.value = repo.getResults()
                     }
                     return resultsMut
                 }
@@ -186,18 +172,17 @@ fun MainComponent(dao: AppDao) {
     }
 }
 
-fun makeChoiceListViewModel(dao: AppDao, nav: DestinationsNavigator): ChoiceListViewModel {
+fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): ChoiceListViewModel {
    return object: ChoiceListViewModel() {
        override fun fillWithCurrentChoices() {
            viewModelScope.launch {
-               choicesMut.value = dao.getAllChoices()
+               choicesMut.value = repo.getAllChoices()
            }
        }
 
        override fun insertNewChoice(prompt: String) {
            viewModelScope.launch {
-               val id = dao.insertChoice(prompt)
-               choicesMut.value = choices.value.plus(Choice(id, prompt))
+               choicesMut.value = choices.value.plus(repo.insertChoice(prompt))
            }
        }
 

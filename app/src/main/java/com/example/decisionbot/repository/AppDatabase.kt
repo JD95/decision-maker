@@ -1,4 +1,4 @@
-package com.example.decisionbot
+package com.example.decisionbot.repository
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
