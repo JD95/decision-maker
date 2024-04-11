@@ -6,7 +6,7 @@ import com.example.decisionbot.repository.entity.Result
 import com.example.decisionbot.repository.entity.RequirementBox
 
 class AppRepository(
-    val dao: AppDao
+    private val dao: AppDao
 ) {
     suspend fun getAllChoices(): List<Choice> {
         return dao.getAllChoices()
