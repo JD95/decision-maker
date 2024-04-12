@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.sp
@@ -32,7 +33,6 @@ import com.ramcosta.composedestinations.DestinationsNavHost
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.manualcomposablecalls.composable
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -59,13 +59,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class Crud<Key, T>(
-    val getAssociated: @Composable (Key) -> State<List<T>>,
-    val edit: (T) -> Unit,
-    val delete: (T) -> Unit
-)
-
-
 suspend fun seedTestDb(dao: AppDao) {
     Log.i("startup", "Seeding database!")
     val stayInGoOut = dao.insertChoice("Stay in or go out?")
@@ -83,31 +76,6 @@ suspend fun seedTestDb(dao: AppDao) {
     dao.insertRequirement(stayInGoOut, stayIn)
 }
 
-fun <K, T> makeCrud(
-    scope: CoroutineScope,
-    get: suspend (K) -> List<T>,
-    edit: suspend (T) -> Unit,
-    delete: suspend (T) -> Unit,
-): Crud<K, T>  {
-    return Crud(
-        getAssociated = {
-            produceState(emptyList()) {
-                value = get(it)
-            }
-        },
-        edit = {
-            scope.launch {
-                edit(it)
-            }
-        },
-        delete = {
-            scope.launch {
-                delete(it)
-            }
-        }
-    )
-}
-
 @Composable
 fun MainComponent(repo: AppRepository) {
     DestinationsNavHost(navGraph = NavGraphs.root) {
@@ -120,28 +88,34 @@ fun MainComponent(repo: AppRepository) {
         composable(EditChoicePageDestination) {
             EditChoicePage(object: EditChoicePageViewModel(navArgs.choice) {
 
-                override val answerCrud: Crud<Choice, Answer>
-                    get() = makeCrud(
-                        viewModelScope,
-                        repo::getAnswersForChoice,
-                        repo::editAnswer,
-                        repo::deleteAnswer
-                    )
-
-                override val requirementBoxCrud: Crud<Choice, RequirementBox>
-                    get() = makeCrud(
-                        viewModelScope,
-                        repo::getRequirementBoxInfoFor,
-                        repo::editRequirementBox,
-                        repo::deleteRequirementBox
-                    )
-
                 override fun updateChoicePrompt(prompt: String) {
                     viewModelScope.launch {
                         val updatedChoice = choice.value.copy(prompt = prompt)
                         repo.editChoice(updatedChoice)
                         choiceMut.value = updatedChoice
                     }
+                }
+
+                override fun getAnswers(): List<ListItem<Answer>> {
+                    viewModelScope.launch {
+                        answersMut.value = repo.getAnswersForChoice(choice.value)
+                    }
+                    return makeListItems(
+                        answersMut,
+                        { new -> viewModelScope.launch { repo.editAnswer(new) } },
+                        { item -> viewModelScope.launch { repo.deleteAnswer(item) } }
+                    )
+                }
+
+                override fun getRequirements(): List<ListItem<RequirementBox>> {
+                    viewModelScope.launch {
+                        requirementsMut.value = repo.getRequirementBoxInfoFor(choice.value)
+                    }
+                    return makeListItems(
+                        requirementsMut,
+                        { new -> viewModelScope.launch { repo.editRequirementBox(new) } },
+                        { item -> viewModelScope.launch { repo.deleteRequirementBox(item) }}
+                    )
                 }
             })
         }
@@ -267,13 +241,35 @@ fun AnswerQuestionPage(st: AnswerQuestionPageViewModel) {
 
 abstract class EditChoicePageViewModel(choice: Choice) : ViewModel() {
     protected val choiceMut: MutableState<Choice> = mutableStateOf(choice)
+    protected val answersMut: MutableState<List<Answer>> = mutableStateOf(emptyList())
+    protected val requirementsMut: MutableState<List<RequirementBox>> = mutableStateOf(emptyList())
 
     val choice: State<Choice> = choiceMut
 
-    abstract val answerCrud: Crud<Choice, Answer>
-    abstract val requirementBoxCrud: Crud<Choice, RequirementBox>
-
     abstract fun updateChoicePrompt(prompt: String)
+    abstract fun getAnswers(): List<ListItem<Answer>>
+    abstract fun getRequirements(): List<ListItem<RequirementBox>>
+}
+
+fun <T> makeListItems(
+    items: MutableState<List<T>>,
+    edit: (T) -> Unit,
+    delete: (T) -> Unit
+): List<ListItem<T>> {
+    return items.value.map { t ->
+        val st = mutableStateOf(t)
+        ListItem(
+            get = { st.value },
+            edit = { new ->
+                edit(new)
+                st.value = new
+            },
+            delete = {
+                delete(t)
+                items.value = items.value.minus(t)
+            }
+        )
+    }.toList()
 }
 
 data class EditChoicePageNavArgs(
@@ -293,34 +289,42 @@ fun EditChoicePage(
       )
 
       Text(text = "Answers", fontSize = 25.sp)
-      EditDeleteBoxList(st.choice.value, st.answerCrud) { answer ->
+      EditDeleteBoxList(st.getAnswers()) { answer ->
           Text(text = answer.description)
       }
 
       Text(text = "Requirements", fontSize = 25.sp)
-      EditDeleteBoxList(st.choice.value, st.requirementBoxCrud) { requirement ->
+      EditDeleteBoxList(st.getRequirements()) { requirement ->
           Text(text = requirement.prompt)
           Text(text = requirement.description)
       }
   }
 }
 
+data class ListItem<T>(
+    val edit: (T) -> Unit,
+    val delete: () -> Unit,
+    val get: () -> T
+)
+
 @Composable
-fun <Key, Item> EditDeleteBoxList(
-    key: Key,
-    updater: Crud<Key, Item>,
+fun <Item> EditDeleteBoxList(
+    items: List<ListItem<Item>>,
     displayItem: @Composable (Item) -> Unit,
 ) {
-    val stuff = updater.getAssociated(key).value
     LazyColumn {
-        items(stuff) { item ->
+        items(items) { item ->
             Box {
-                displayItem(item)
-                TextButton(onClick = { updater.edit(item) }) {
-                    Text(text = "edit")
-                }
-                TextButton(onClick = { updater.delete(item) }) {
-                    Text(text = "delete")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    displayItem(item.get())
+                    TextButton(onClick = { }){
+                        Text(text = "edit")
+                    }
+                    TextButton(onClick = { item.delete() }) {
+                        Text(text = "delete")
+                    }
                 }
             }
         }

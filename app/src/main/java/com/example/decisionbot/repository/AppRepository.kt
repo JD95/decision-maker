@@ -47,11 +47,10 @@ class AppRepository(
 
     suspend fun getNextChoiceForDecision(): Choice? {
         val results = dao.getNextChoice()
-        if (results.isNotEmpty()) {
-            return results[0]
-        }
-        else {
-            return null
+        return if (results.isNotEmpty()) {
+            results[0]
+        } else {
+            null
         }
     }
 
