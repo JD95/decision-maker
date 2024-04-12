@@ -155,6 +155,16 @@ interface AppDao {
 
     @Query(
         """
+            select c.id, c.prompt 
+            from answer a 
+               join choice c on c.id = a.choice
+            where a.id = :answerId
+        """
+    )
+    suspend fun getChoiceForAnswer(answerId: Long): Choice
+
+    @Query(
+        """
             select c.prompt as prompt, a.description as answer
             from decision d
               join choice c on d.choice = c.id

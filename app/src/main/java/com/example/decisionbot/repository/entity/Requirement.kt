@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 @Entity
+@kotlinx.serialization.Serializable
 data class Requirement(
     @PrimaryKey val id: Long,
     @ColumnInfo(name = "choice") val choice: Long,

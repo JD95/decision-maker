@@ -8,27 +8,26 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
-import com.example.decisionbot.destinations.AnswerQuestionPageDestination
-import com.example.decisionbot.destinations.ChoiceListPageDestination
-import com.example.decisionbot.destinations.EditChoicePageDestination
-import com.example.decisionbot.destinations.HomePageDestination
+import com.example.decisionbot.destinations.*
 import com.example.decisionbot.repository.AppDao
 import com.example.decisionbot.repository.AppDatabase
 import com.example.decisionbot.repository.AppRepository
-import com.example.decisionbot.repository.entity.Answer
-import com.example.decisionbot.repository.entity.Choice
-import com.example.decisionbot.repository.entity.RequirementBox
-import com.example.decisionbot.repository.entity.Result
+import com.example.decisionbot.repository.entity.*
 import com.example.decisionbot.ui.theme.DecisionBotTheme
+import com.example.decisionbot.view.LargeDropDownMenu
+import com.example.decisionbot.view.LargeDropDownMenuItem
 import com.ramcosta.composedestinations.DestinationsNavHost
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.manualcomposablecalls.composable
@@ -73,7 +72,7 @@ suspend fun seedTestDb(dao: AppDao) {
     val movieOrAnime = dao.insertChoice("Watch a movie or anime?")
     dao.insertAnswer(movieOrAnime, "Movie")
     dao.insertAnswer(movieOrAnime, "Anime")
-    dao.insertRequirement(stayInGoOut, stayIn)
+    dao.insertRequirement(movieOrAnime, stayIn)
 }
 
 @Composable
@@ -86,7 +85,7 @@ fun MainComponent(repo: AppRepository) {
             )
         }
         composable(EditChoicePageDestination) {
-            EditChoicePage(object: EditChoicePageViewModel(navArgs.choice) {
+            EditChoicePage(object : EditChoicePageViewModel(navArgs.choice) {
 
                 override fun updateChoicePrompt(prompt: String) {
                     viewModelScope.launch {
@@ -102,7 +101,7 @@ fun MainComponent(repo: AppRepository) {
                     }
                     return makeListItems(
                         answersMut,
-                        { new -> viewModelScope.launch { repo.editAnswer(new) } },
+                        { item -> viewModelScope.launch { repo.editAnswer(item) } },
                         { item -> viewModelScope.launch { repo.deleteAnswer(item) } }
                     )
                 }
@@ -113,8 +112,28 @@ fun MainComponent(repo: AppRepository) {
                     }
                     return makeListItems(
                         requirementsMut,
-                        { new -> viewModelScope.launch { repo.editRequirementBox(new) } },
-                        { item -> viewModelScope.launch { repo.deleteRequirementBox(item) }}
+                        { item ->
+                            destinationsNavigator.navigate(
+                                EditRequirementPageDestination(
+                                    choice.value,
+                                    Requirement(item.id, item.choice, item.answer)
+                                )
+                            )
+                        },
+                        { item -> viewModelScope.launch { repo.deleteRequirementBox(item) } }
+                    )
+                }
+
+                override fun newAnswer() {
+                    viewModelScope.launch {
+                        val new = repo.insertAnswer(choice.value, "new answer")
+                        answersMut.value = answersMut.value.plus(new)
+                    }
+                }
+
+                override fun newRequirement() {
+                    destinationsNavigator.navigate(
+                        EditRequirementPageDestination(choice.value, null)
                     )
                 }
             })
@@ -123,7 +142,7 @@ fun MainComponent(repo: AppRepository) {
             ChoiceListPage(makeChoiceListViewModel(repo, destinationsNavigator))
         }
         composable(AnswerQuestionPageDestination) {
-            AnswerQuestionPage(object: AnswerQuestionPageViewModel() {
+            AnswerQuestionPage(object : AnswerQuestionPageViewModel() {
                 override fun setupNextQuestion() {
                     viewModelScope.launch {
                         val result = repo.getNextChoiceForDecision()
@@ -143,27 +162,101 @@ fun MainComponent(repo: AppRepository) {
 
             })
         }
+        composable(EditRequirementPageDestination) {
+            EditRequirementPage(object : EditRequirementsPageViewModel(
+                navArgs.parentChoice,
+                navArgs.requirement
+            ) {
+                override fun populate() {
+                    viewModelScope.launch {
+                        choices.value = repo.getAllChoices()
+                        if (requirement != null) {
+                            val givenChoice = repo.getChoiceForRequirement(requirement)
+                            choice.value = givenChoice
+                            selectedChoiceIndexMut.value = choices.value.indexOfFirst {
+                                it.id == givenChoice.id
+                            }
+                            answersMut.value = repo.getAnswersForChoice(givenChoice)
+                            selectedAnswerIndexMut.value = answersMut.value.indexOfFirst {
+                                it.id == requirement.answer
+                            }
+                        } else {
+                            if (choices.value.isNotEmpty()) {
+                                answersMut.value = repo.getAnswersForChoice(
+                                    choices.value[selectedChoiceIndex.value]
+                                )
+                            }
+                        }
+                    }
+                }
+
+                override fun allChoices(): List<Choice> {
+                    return choices.value
+                }
+
+                override fun answersForChoice(): List<Answer> {
+                    val choice = choice.value
+                    return if (choice != null) {
+                        viewModelScope.launch {
+                            answersMut.value = repo.getAnswersForChoice(choice)
+                        }
+                        answersMut.value
+                    } else {
+                        emptyList()
+                    }
+                }
+
+                override fun chooseChoice(index: Int, item: Choice) {
+                    choice.value = item
+                    selectedChoiceIndexMut.value = index
+                }
+
+                override fun chooseAnswer(index: Int, item: Answer) {
+                    answer.value = item
+                    selectedAnswerIndexMut.value = index
+                }
+
+                override fun close() {
+                    viewModelScope.launch {
+                        val chosenAnswer = answer.value
+                        if (chosenAnswer != null) {
+                            if (requirement != null) {
+                                repo.editRequirement(
+                                    requirement.copy(
+                                        choice = parentChoice.id,
+                                        answer = chosenAnswer.id
+                                    )
+                                )
+                            } else {
+                                repo.insertRequirement(parentChoice, chosenAnswer)
+                            }
+                        }
+                    }
+                    destinationsNavigator.navigate(EditChoicePageDestination(parentChoice))
+                }
+            })
+        }
     }
 }
 
 fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): ChoiceListViewModel {
-   return object: ChoiceListViewModel() {
-       override fun fillWithCurrentChoices() {
-           viewModelScope.launch {
-               choicesMut.value = repo.getAllChoices()
-           }
-       }
+    return object : ChoiceListViewModel() {
+        override fun fillWithCurrentChoices() {
+            viewModelScope.launch {
+                choicesMut.value = repo.getAllChoices()
+            }
+        }
 
-       override fun insertNewChoice(prompt: String) {
-           viewModelScope.launch {
-               choicesMut.value = choices.value.plus(repo.insertChoice(prompt))
-           }
-       }
+        override fun insertNewChoice(prompt: String) {
+            viewModelScope.launch {
+                choicesMut.value = choices.value.plus(repo.insertChoice(prompt))
+            }
+        }
 
-       override fun gotoEditChoicePage(choice: Choice) {
-           nav.navigate(EditChoicePageDestination(choice))
-       }
-   }
+        override fun gotoEditChoicePage(choice: Choice) {
+            nav.navigate(EditChoicePageDestination(choice))
+        }
+    }
 }
 
 @Composable
@@ -182,7 +275,7 @@ fun HomePage(
     }
 }
 
-abstract class ChoiceListViewModel : ViewModel()  {
+abstract class ChoiceListViewModel : ViewModel() {
     protected val choicesMut = mutableStateOf(emptyList<Choice>())
     val choices: State<List<Choice>> = choicesMut
     abstract fun fillWithCurrentChoices()
@@ -192,7 +285,7 @@ abstract class ChoiceListViewModel : ViewModel()  {
 
 @Composable
 @Destination
-fun ChoiceListPage(st: ChoiceListViewModel)  {
+fun ChoiceListPage(st: ChoiceListViewModel) {
     st.fillWithCurrentChoices()
     Column {
         Text(text = "Choices", fontSize = 25.sp)
@@ -249,6 +342,9 @@ abstract class EditChoicePageViewModel(choice: Choice) : ViewModel() {
     abstract fun updateChoicePrompt(prompt: String)
     abstract fun getAnswers(): List<ListItem<Answer>>
     abstract fun getRequirements(): List<ListItem<RequirementBox>>
+    abstract fun newAnswer()
+
+    abstract fun newRequirement()
 }
 
 fun <T> makeListItems(
@@ -260,10 +356,7 @@ fun <T> makeListItems(
         val st = mutableStateOf(t)
         ListItem(
             get = { st.value },
-            edit = { new ->
-                edit(new)
-                st.value = new
-            },
+            edit = { edit(t) },
             delete = {
                 delete(t)
                 items.value = items.value.minus(t)
@@ -281,28 +374,38 @@ data class EditChoicePageNavArgs(
 fun EditChoicePage(
     st: EditChoicePageViewModel
 ) {
-  Column {
-      Text(text = "Prompt", fontSize = 25.sp)
-      TextField(
-          value = st.choice.value.prompt,
-          onValueChange = { st.updateChoicePrompt(it) }
-      )
+    Column {
+        Text(text = "Prompt", fontSize = 25.sp)
+        TextField(
+            value = st.choice.value.prompt,
+            onValueChange = { st.updateChoicePrompt(it) }
+        )
 
-      Text(text = "Answers", fontSize = 25.sp)
-      EditDeleteBoxList(st.getAnswers()) { answer ->
-          Text(text = answer.description)
-      }
+        ListTitle("Answers") { st.newAnswer() }
+        EditDeleteBoxList(st.getAnswers()) { answer ->
+            Text(text = answer.description)
+        }
 
-      Text(text = "Requirements", fontSize = 25.sp)
-      EditDeleteBoxList(st.getRequirements()) { requirement ->
-          Text(text = requirement.prompt)
-          Text(text = requirement.description)
-      }
-  }
+        ListTitle("Requirements") { st.newRequirement() }
+        EditDeleteBoxList(st.getRequirements()) { requirement ->
+            Text(text = requirement.prompt)
+            Text(text = requirement.description)
+        }
+    }
+}
+
+@Composable
+fun ListTitle(title: String, newItem: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(text = title, fontSize = 25.sp)
+        TextButton(onClick = newItem) {
+            Text(text = "+", fontSize = 25.sp)
+        }
+    }
 }
 
 data class ListItem<T>(
-    val edit: (T) -> Unit,
+    val edit: () -> Unit,
     val delete: () -> Unit,
     val get: () -> T
 )
@@ -319,7 +422,7 @@ fun <Item> EditDeleteBoxList(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     displayItem(item.get())
-                    TextButton(onClick = { }){
+                    TextButton(onClick = { item.edit() }) {
                         Text(text = "edit")
                     }
                     TextButton(onClick = { item.delete() }) {
@@ -327,6 +430,86 @@ fun <Item> EditDeleteBoxList(
                     }
                 }
             }
+        }
+    }
+}
+
+abstract class EditRequirementsPageViewModel(
+    val parentChoice: Choice,
+    val requirement: Requirement?
+) : ViewModel() {
+
+    protected val selectedChoiceIndexMut: MutableState<Int> = mutableStateOf(0)
+    protected val selectedAnswerIndexMut: MutableState<Int> = mutableStateOf(0)
+
+    protected val choice: MutableState<Choice?> = mutableStateOf(null)
+    protected val answer: MutableState<Answer?> = mutableStateOf(null)
+
+    protected val choices: MutableState<List<Choice>> = mutableStateOf(emptyList())
+    protected val answersMut: MutableState<List<Answer>> = mutableStateOf(emptyList())
+
+    val selectedChoiceIndex: State<Int> = selectedChoiceIndexMut
+    val selectedAnswerIndex: State<Int> = selectedAnswerIndexMut
+
+    abstract fun populate()
+
+    abstract fun allChoices(): List<Choice>
+    abstract fun answersForChoice(): List<Answer>
+    abstract fun chooseChoice(index: Int, item: Choice)
+
+    abstract fun chooseAnswer(index: Int, item: Answer)
+
+    abstract fun close()
+}
+
+data class EditRequirementPageNavArgs(
+    val parentChoice: Choice,
+    val requirement: Requirement?
+)
+
+@Composable
+@Destination(navArgsDelegate = EditRequirementPageNavArgs::class)
+fun EditRequirementPage(st: EditRequirementsPageViewModel) {
+    Scaffold(floatingActionButton = {
+        FloatingActionButton(onClick = { st.close() }) {
+            Icon(Icons.Default.Done, contentDescription = "save")
+        }
+    }) { innerPadding ->
+        st.populate()
+        Column(modifier = Modifier.padding(innerPadding)) {
+            Text(text = "Edit Requirement", fontSize = 30.sp)
+            Spacer(modifier = Modifier.height(10.dp))
+            LargeDropDownMenu(
+                label = "Choice",
+                items = st.allChoices(),
+                selectedIndex = st.selectedChoiceIndex.value,
+                onItemSelected = st::chooseChoice,
+                selectedItemToString = { it -> it.prompt },
+                drawItem = { item, selected, enabled, onClick ->
+                    LargeDropDownMenuItem(
+                        text = item.prompt,
+                        selected = selected,
+                        enabled = enabled,
+                        onClick = onClick
+                    )
+                }
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            LargeDropDownMenu(
+                label = "Answer",
+                items = st.answersForChoice(),
+                selectedIndex = st.selectedAnswerIndex.value,
+                onItemSelected = st::chooseAnswer,
+                selectedItemToString = { it -> it.description },
+                drawItem = { item, selected, enabled, onClick ->
+                    LargeDropDownMenuItem(
+                        text = item.description,
+                        selected = selected,
+                        enabled = enabled,
+                        onClick = onClick
+                    )
+                }
+            )
         }
     }
 }
@@ -346,7 +529,7 @@ fun ChoiceForm(choice: Choice, answers: List<Answer>) {
 
 @Composable
 fun AnswerField(answer: Answer) {
-   Text(text = answer.description)
+    Text(text = answer.description)
 }
 
 @Composable

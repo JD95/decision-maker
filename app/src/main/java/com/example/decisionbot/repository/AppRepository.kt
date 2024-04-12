@@ -1,9 +1,6 @@
 package com.example.decisionbot.repository
 
-import com.example.decisionbot.repository.entity.Answer
-import com.example.decisionbot.repository.entity.Choice
-import com.example.decisionbot.repository.entity.Result
-import com.example.decisionbot.repository.entity.RequirementBox
+import com.example.decisionbot.repository.entity.*
 
 class AppRepository(
     private val dao: AppDao
@@ -25,6 +22,11 @@ class AppRepository(
         return dao.getAnswersFor(value.id)
     }
 
+    suspend fun insertAnswer(choice: Choice, description: String): Answer {
+        val id = dao.insertAnswer(choice.id, description)
+        return Answer(id, choice.id, description)
+    }
+
     suspend fun editAnswer(answer: Answer) {
         dao.updateAnswer(answer.id, answer.description)
     }
@@ -33,12 +35,21 @@ class AppRepository(
         dao.deleteAnswer(answer.id)
     }
 
+    suspend fun insertRequirement(choice: Choice, answer: Answer): Requirement {
+        val id = dao.insertRequirement(choice.id, answer.id)
+        return Requirement(id, choice.id, answer.id)
+    }
+
+    suspend fun editRequirement(requirement: Requirement) {
+        dao.updateRequirement(requirement.id, requirement.choice, requirement.answer)
+    }
+
     suspend fun getRequirementBoxInfoFor(choice: Choice): List<RequirementBox> {
         return dao.getRequirementBoxFor(choice.id)
     }
 
-    suspend fun editRequirementBox(value: RequirementBox) {
-        dao.updateRequirement(value.id, value.choice, value.answer)
+    suspend fun getChoiceForRequirement(req: Requirement): Choice {
+        return dao.getChoiceForAnswer(req.answer)
     }
 
     suspend fun deleteRequirementBox(value: RequirementBox) {
