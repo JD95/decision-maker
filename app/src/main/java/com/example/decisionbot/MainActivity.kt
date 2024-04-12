@@ -169,22 +169,24 @@ fun MainComponent(repo: AppRepository) {
             ) {
                 override fun populate() {
                     viewModelScope.launch {
-                        choices.value = repo.getAllChoices()
-                        if (requirement != null) {
-                            val givenChoice = repo.getChoiceForRequirement(requirement)
-                            choice.value = givenChoice
-                            selectedChoiceIndexMut.value = choices.value.indexOfFirst {
-                                it.id == givenChoice.id
-                            }
-                            answersMut.value = repo.getAnswersForChoice(givenChoice)
-                            selectedAnswerIndexMut.value = answersMut.value.indexOfFirst {
-                                it.id == requirement.answer
-                            }
-                        } else {
-                            if (choices.value.isNotEmpty()) {
-                                answersMut.value = repo.getAnswersForChoice(
-                                    choices.value[selectedChoiceIndex.value]
-                                )
+                        if (choice.value == null) {
+                            choices.value = repo.getAllChoices()
+                            if (requirement != null) {
+                                val givenChoice = repo.getChoiceForRequirement(requirement)
+                                choice.value = givenChoice
+                                selectedChoiceIndexMut.value = choices.value.indexOfFirst {
+                                    it.id == givenChoice.id
+                                }
+                                answersMut.value = repo.getAnswersForChoice(givenChoice)
+                                selectedAnswerIndexMut.value = answersMut.value.indexOfFirst {
+                                    it.id == requirement.answer
+                                }
+                            } else {
+                                if (choices.value.isNotEmpty()) {
+                                    answersMut.value = repo.getAnswersForChoice(
+                                        choices.value[selectedChoiceIndex.value]
+                                    )
+                                }
                             }
                         }
                     }
@@ -476,6 +478,8 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
         }
     }) { innerPadding ->
         st.populate()
+        remember { st.selectedChoiceIndex }
+        remember { st.selectedAnswerIndex }
         Column(modifier = Modifier.padding(innerPadding)) {
             Text(text = "Edit Requirement", fontSize = 30.sp)
             Spacer(modifier = Modifier.height(10.dp))
