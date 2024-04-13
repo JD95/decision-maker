@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -88,10 +89,13 @@ fun MainComponent(repo: AppRepository) {
             EditChoicePage(object : EditChoicePageViewModel(navArgs.choice) {
 
                 override fun updateChoicePrompt(prompt: String) {
+                    val updatedChoice = choice.value.copy(prompt = prompt)
+                    choiceMut.value = updatedChoice
+                }
+
+                override fun saveChoice() {
                     viewModelScope.launch {
-                        val updatedChoice = choice.value.copy(prompt = prompt)
-                        repo.editChoice(updatedChoice)
-                        choiceMut.value = updatedChoice
+                        repo.editChoice(choiceMut.value)
                     }
                 }
 
@@ -243,10 +247,15 @@ fun MainComponent(repo: AppRepository) {
 
 fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): ChoiceListViewModel {
     return object : ChoiceListViewModel() {
-        override fun fillWithCurrentChoices() {
+        override fun getChoices(): List<ListItem<Choice>> {
             viewModelScope.launch {
                 choicesMut.value = repo.getAllChoices()
             }
+            return makeListItems(
+                choicesMut,
+                edit = { nav.navigate(EditChoicePageDestination(it)) },
+                delete = { viewModelScope.launch {  repo.deleteChoice(it) } },
+            )
         }
 
         override fun insertNewChoice(prompt: String) {
@@ -255,9 +264,6 @@ fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): Ch
             }
         }
 
-        override fun gotoEditChoicePage(choice: Choice) {
-            nav.navigate(EditChoicePageDestination(choice))
-        }
     }
 }
 
@@ -280,30 +286,17 @@ fun HomePage(
 abstract class ChoiceListViewModel : ViewModel() {
     protected val choicesMut = mutableStateOf(emptyList<Choice>())
     val choices: State<List<Choice>> = choicesMut
-    abstract fun fillWithCurrentChoices()
+    abstract fun getChoices(): List<ListItem<Choice>>
     abstract fun insertNewChoice(prompt: String)
-    abstract fun gotoEditChoicePage(choice: Choice)
 }
 
 @Composable
 @Destination
 fun ChoiceListPage(st: ChoiceListViewModel) {
-    st.fillWithCurrentChoices()
     Column {
-        Text(text = "Choices", fontSize = 25.sp)
-
-        LazyColumn {
-            items(st.choices.value) { choice ->
-                Button(
-                    onClick = { st.gotoEditChoicePage(choice) }
-                ) {
-                    Text(text = choice.prompt)
-                }
-            }
-        }
-
-        Button(onClick = { st.insertNewChoice("New Choice!") }) {
-            Text(text = "Add Choice")
+        ListTitle(title = "Choices") { st.insertNewChoice("New Choice!") }
+        EditDeleteBoxList(st.getChoices()) { requirement ->
+            Text(text = requirement.prompt)
         }
     }
 }
@@ -342,6 +335,9 @@ abstract class EditChoicePageViewModel(choice: Choice) : ViewModel() {
     val choice: State<Choice> = choiceMut
 
     abstract fun updateChoicePrompt(prompt: String)
+
+    abstract fun saveChoice()
+
     abstract fun getAnswers(): List<ListItem<Answer>>
     abstract fun getRequirements(): List<ListItem<RequirementBox>>
     abstract fun newAnswer()
@@ -379,6 +375,11 @@ fun EditChoicePage(
     Column {
         Text(text = "Prompt", fontSize = 25.sp)
         TextField(
+            modifier = Modifier.onFocusChanged { focus ->
+                if (!focus.isFocused) {
+                    st.saveChoice()
+                }
+            },
             value = st.choice.value.prompt,
             onValueChange = { st.updateChoicePrompt(it) }
         )
@@ -520,9 +521,9 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
 
 @Composable
 fun ChoiceForm(choice: Choice, answers: List<Answer>) {
-    Text(text = choice.prompt)
+    Text(text = choice.prompt, fontSize = 25.sp)
     Column {
-        Text("Options:")
+        Text("Options:", fontSize = 30.sp)
         LazyColumn {
             items(answers) { answer ->
                 AnswerField(answer)
@@ -533,7 +534,9 @@ fun ChoiceForm(choice: Choice, answers: List<Answer>) {
 
 @Composable
 fun AnswerField(answer: Answer) {
-    Text(text = answer.description)
+    Button(onClick = { }) {
+        Text(text = answer.description, fontSize = 20.sp)
+    }
 }
 
 @Composable

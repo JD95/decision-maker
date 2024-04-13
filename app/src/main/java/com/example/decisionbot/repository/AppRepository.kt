@@ -68,4 +68,8 @@ class AppRepository(
     suspend fun getResults(): List<Result> {
         return dao.getResults()
     }
+
+    suspend fun deleteChoice(value: Choice) {
+        dao.deleteChoice(value.id)
+    }
 }
