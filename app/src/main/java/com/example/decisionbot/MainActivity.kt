@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalComposeUiApi::class)
+
 package com.example.decisionbot
 
 import android.os.Bundle
@@ -7,14 +9,18 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -140,6 +146,11 @@ fun MainComponent(repo: AppRepository) {
                     destinationsNavigator.navigate(
                         EditRequirementPageDestination(choice.value, null)
                     )
+                }
+
+                override fun gotoChoiceListPage() {
+                    destinationsNavigator.popBackStack()
+                    destinationsNavigator.navigate(ChoiceListPageDestination)
                 }
             })
         }
@@ -352,6 +363,8 @@ abstract class EditChoicePageViewModel(choice: Choice) : ViewModel() {
     abstract fun newAnswer()
 
     abstract fun newRequirement()
+
+    abstract fun gotoChoiceListPage()
 }
 
 fun <T> makeListItems(
@@ -381,27 +394,41 @@ data class EditChoicePageNavArgs(
 fun EditChoicePage(
     st: EditChoicePageViewModel
 ) {
-    Column {
-        Text(text = "Prompt", fontSize = 25.sp)
-        TextField(
-            modifier = Modifier.onFocusChanged { focus ->
-                if (!focus.isFocused) {
+    val keyboardController = LocalSoftwareKeyboardController.current
+    Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = {
                     st.saveChoice()
+                    st.gotoChoiceListPage()
                 }
-            },
-            value = st.choice.value.prompt,
-            onValueChange = { st.updateChoicePrompt(it) }
-        )
+            ) {
+                Icon(Icons.Default.Done, contentDescription = "save choice")
+            }
+        }) { innerPadding ->
 
-        ListTitle("Answers") { st.newAnswer() }
-        EditDeleteBoxList(st.getAnswers()) { answer ->
-            Text(text = answer.description)
-        }
+        Column(modifier = Modifier.padding(innerPadding)) {
+            OutlinedTextField(
+                label = { Text(text = "Prompt", fontSize = 20.sp) },
+                value = st.choice.value.prompt,
+                onValueChange = { st.updateChoicePrompt(it) },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = {
+                    st.saveChoice()
+                    keyboardController?.hide()
+                })
+            )
 
-        ListTitle("Requirements") { st.newRequirement() }
-        EditDeleteBoxList(st.getRequirements()) { requirement ->
-            Text(text = requirement.prompt)
-            Text(text = requirement.description)
+            ListTitle("Answers") { st.newAnswer() }
+            EditDeleteBoxList(st.getAnswers()) { answer ->
+                Text(text = answer.description)
+            }
+
+            ListTitle("Requirements") { st.newRequirement() }
+            EditDeleteBoxList(st.getRequirements()) { requirement ->
+                Text(text = requirement.prompt)
+                Text(text = requirement.description)
+            }
         }
     }
 }
