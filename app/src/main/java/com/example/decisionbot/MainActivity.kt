@@ -83,6 +83,11 @@ suspend fun seedTestDb(dao: AppDao) {
     dao.insertRequirement(movieOrAnime, stayIn)
 }
 
+data class AnswerFieldContext(
+    val inEdit: MutableState<Boolean>,
+    val state: MutableState<Answer>
+)
+
 @Composable
 fun MainComponent(repo: AppRepository) {
     DestinationsNavHost(navGraph = NavGraphs.root) {
@@ -106,28 +111,46 @@ fun MainComponent(repo: AppRepository) {
                     }
                 }
 
-                override fun getAnswers(): List<ListItem<Answer>> {
+                override fun getAnswers(): List<ListItem<Answer, AnswerFieldContext>> {
                     viewModelScope.launch {
                         answersMut.value = repo.getAnswersForChoice(choice.value)
+                        val msg = answersMut.value
+                            .map { "${it.id}: '${it.description}', "}
+                            .fold("") { x, y -> x.plus(y) }
+                        Log.d("getAnswers", "Answers for choice:${choice.value.id} = $msg")
                     }
                     return makeListItems(
                         answersMut,
-                        { item -> viewModelScope.launch { repo.editAnswer(item) } },
+                        editContext = {
+                            AnswerFieldContext(
+                                inEdit = mutableStateOf(false),
+                                state = it
+                            )
+                        },
+                        edit = { _, ctx -> ctx.inEdit.value = true },
                         { item -> viewModelScope.launch { repo.deleteAnswer(item) } }
                     )
                 }
 
-                override fun getRequirements(): List<ListItem<RequirementBox>> {
+                override fun updateAnswer(value: MutableState<Answer>, newDescription: String) {
+                    val newAnswer = value.value.copy(description = newDescription)
+                    viewModelScope.launch {
+                        repo.editAnswer(newAnswer)
+                    }
+                    value.value = newAnswer
+                }
+
+                override fun getRequirements(): List<ListItem<RequirementBox, Unit>> {
                     viewModelScope.launch {
                         requirementsMut.value = repo.getRequirementBoxInfoFor(choice.value)
                     }
                     return makeListItems(
                         requirementsMut,
-                        { item ->
+                        edit = { item ->
                             destinationsNavigator.navigate(
                                 EditRequirementPageDestination(
                                     choice.value,
-                                    Requirement(item.id, item.choice, item.answer)
+                                    Requirement(item.value.id, item.value.choice, item.value.answer)
                                 )
                             )
                         },
@@ -149,7 +172,6 @@ fun MainComponent(repo: AppRepository) {
                 }
 
                 override fun gotoChoiceListPage() {
-                    destinationsNavigator.popBackStack()
                     destinationsNavigator.navigate(ChoiceListPageDestination)
                 }
             })
@@ -268,13 +290,13 @@ fun MainComponent(repo: AppRepository) {
 
 fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): ChoiceListViewModel {
     return object : ChoiceListViewModel() {
-        override fun getChoices(): List<ListItem<Choice>> {
+        override fun getChoices(): List<ListItem<Choice, Unit>> {
             viewModelScope.launch {
                 choicesMut.value = repo.getAllChoices()
             }
             return makeListItems(
                 choicesMut,
-                edit = { nav.navigate(EditChoicePageDestination(it)) },
+                edit = { x -> nav.navigate(EditChoicePageDestination(x.value)) },
                 delete = { viewModelScope.launch {  repo.deleteChoice(it) } },
             )
         }
@@ -307,7 +329,7 @@ fun HomePage(
 abstract class ChoiceListViewModel : ViewModel() {
     protected val choicesMut = mutableStateOf(emptyList<Choice>())
     val choices: State<List<Choice>> = choicesMut
-    abstract fun getChoices(): List<ListItem<Choice>>
+    abstract fun getChoices(): List<ListItem<Choice, Unit>>
     abstract fun insertNewChoice(prompt: String)
 }
 
@@ -358,8 +380,11 @@ abstract class EditChoicePageViewModel(choice: Choice) : ViewModel() {
 
     abstract fun saveChoice()
 
-    abstract fun getAnswers(): List<ListItem<Answer>>
-    abstract fun getRequirements(): List<ListItem<RequirementBox>>
+    abstract fun getAnswers(): List<ListItem<Answer, AnswerFieldContext>>
+
+    abstract fun updateAnswer(value: MutableState<Answer>, newDescription: String)
+
+    abstract fun getRequirements(): List<ListItem<RequirementBox, Unit>>
     abstract fun newAnswer()
 
     abstract fun newRequirement()
@@ -369,14 +394,29 @@ abstract class EditChoicePageViewModel(choice: Choice) : ViewModel() {
 
 fun <T> makeListItems(
     items: MutableState<List<T>>,
-    edit: (T) -> Unit,
+    edit: (MutableState<T>) -> Unit,
     delete: (T) -> Unit
-): List<ListItem<T>> {
+): List<ListItem<T, Unit>> {
+    return makeListItems(
+        items,
+        editContext = { },
+        edit = { x, _ -> edit(x) },
+        delete = delete
+    )
+}
+
+fun <T, K> makeListItems(
+    items: MutableState<List<T>>,
+    editContext: (MutableState<T>) -> K,
+    edit: (MutableState<T>, K) -> Unit,
+    delete: (T) -> Unit
+): List<ListItem<T, K>> {
     return items.value.map { t ->
         val st = mutableStateOf(t)
+        val ctx = editContext(st)
         ListItem(
-            get = { st.value },
-            edit = { edit(t) },
+            get = { Pair(st.value, ctx) },
+            edit = { edit(st, ctx) },
             delete = {
                 delete(t)
                 items.value = items.value.minus(t)
@@ -420,8 +460,24 @@ fun EditChoicePage(
             )
 
             ListTitle("Answers") { st.newAnswer() }
-            EditDeleteBoxList(st.getAnswers()) { answer ->
-                Text(text = answer.description)
+            EditDeleteBoxList(st.getAnswers()) { answer, ctx ->
+                if (ctx.inEdit.value) {
+                    val text = remember { mutableStateOf(answer.description) }
+                    TextField(
+                        value = text.value,
+                        onValueChange = { text.value = it },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                st.updateAnswer(ctx.state, text.value)
+                                ctx.inEdit.value = false
+                                keyboardController?.hide()
+                            }
+                        )
+                    )
+                } else {
+                    Text(text = answer.description)
+                }
             }
 
             ListTitle("Requirements") { st.newRequirement() }
@@ -444,16 +500,24 @@ fun ListTitle(title: String, newItem: () -> Unit) {
     }
 }
 
-data class ListItem<T>(
+data class ListItem<T, K>(
     val edit: () -> Unit,
     val delete: () -> Unit,
-    val get: () -> T
+    val get: () -> Pair<T, K>
 )
 
 @Composable
 fun <Item> EditDeleteBoxList(
-    items: List<ListItem<Item>>,
+    items: List<ListItem<Item, Unit>>,
     displayItem: @Composable (Item) -> Unit,
+) {
+   EditDeleteBoxList(items) { x, _ -> displayItem(x) }
+}
+
+@Composable
+fun <Item, Context> EditDeleteBoxList(
+    items: List<ListItem<Item, Context>>,
+    displayItem: @Composable (Item, Context) -> Unit,
 ) {
     LazyColumn {
         items(items) { item ->
@@ -461,7 +525,8 @@ fun <Item> EditDeleteBoxList(
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    displayItem(item.get())
+                    val pair = item.get()
+                    displayItem(pair.first, pair.second)
                     TextButton(onClick = { item.edit() }) {
                         Text(text = "edit")
                     }

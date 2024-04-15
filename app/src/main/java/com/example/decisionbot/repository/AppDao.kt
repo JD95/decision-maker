@@ -88,10 +88,10 @@ interface AppDao {
         """
             update answer
             set description = :description
-            where choice = :choiceId
+            where id = :answerId
         """
     )
-    suspend fun updateAnswer(choiceId: Long, description: String)
+    suspend fun updateAnswer(answerId: Long, description: String)
 
     @Query(
         """

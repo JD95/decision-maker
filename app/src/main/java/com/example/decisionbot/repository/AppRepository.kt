@@ -1,5 +1,6 @@
 package com.example.decisionbot.repository
 
+import android.util.Log
 import com.example.decisionbot.repository.entity.*
 
 class AppRepository(
@@ -28,6 +29,7 @@ class AppRepository(
     }
 
     suspend fun editAnswer(answer: Answer) {
+        Log.d("repo.editAnswer", "answer:${answer.id} updated to '${answer.description}'")
         dao.updateAnswer(answer.id, answer.description)
     }
 
