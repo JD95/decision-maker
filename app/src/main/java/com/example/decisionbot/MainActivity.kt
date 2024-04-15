@@ -189,7 +189,7 @@ fun MainComponent(repo: AppRepository) {
             val answer = remember { mutableStateOf<Answer?>(null) }
 
             LaunchedEffect(scope) {
-                choices.value = repo.getAllChoices()
+                choices.value = repo.getAllChoices().filter { it.id != args.parentChoice.id }
                 if (args.requirement != null) {
                     val givenChoice = repo.getChoiceForRequirement(args.requirement)
                     choiceIndex.value = choices.value.indexOfFirst {
@@ -427,6 +427,7 @@ fun EditChoicePage(
             ListTitle("Requirements") { st.newRequirement() }
             EditDeleteBoxList(st.getRequirements()) { requirement ->
                 Text(text = requirement.prompt)
+                Spacer(Modifier.width(10.dp))
                 Text(text = requirement.description)
             }
         }
