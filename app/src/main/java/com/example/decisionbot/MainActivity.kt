@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -167,49 +168,58 @@ fun MainComponent(repo: AppRepository) {
             })
         }
         composable(EditRequirementPageDestination) {
-            EditRequirementPage(object : EditRequirementsPageViewModel(
-                navArgs.parentChoice,
-                navArgs.requirement
-            ) {
-                override fun populate() {
-                    viewModelScope.launch {
-                        if (choice.value == null) {
-                            choices.value = repo.getAllChoices()
-                            if (requirement != null) {
-                                val givenChoice = repo.getChoiceForRequirement(requirement)
-                                choice.value = givenChoice
-                                selectedChoiceIndexMut.value = choices.value.indexOfFirst {
-                                    it.id == givenChoice.id
-                                }
-                                answersMut.value = repo.getAnswersForChoice(givenChoice)
-                                selectedAnswerIndexMut.value = answersMut.value.indexOfFirst {
-                                    it.id == requirement.answer
-                                }
-                            } else {
-                                if (choices.value.isNotEmpty()) {
-                                    answersMut.value = repo.getAnswersForChoice(
-                                        choices.value[selectedChoiceIndex.value]
-                                    )
-                                }
-                            }
-                        }
+            val scope = rememberCoroutineScope()
+            val args = this.navArgs
+            val answerIndex = remember { mutableStateOf(0) }
+            val choiceIndex = remember { mutableStateOf(0) }
+            val choices = remember { mutableStateOf<List<Choice>>(emptyList()) }
+            val choice = remember { mutableStateOf<Choice?>(null) }
+            val answers = remember { mutableStateOf<List<Answer>>(emptyList()) }
+            val answer = remember { mutableStateOf<Answer?>(null) }
+
+            LaunchedEffect(scope) {
+                choices.value = repo.getAllChoices()
+                if (args.requirement != null) {
+                    val givenChoice = repo.getChoiceForRequirement(args.requirement)
+                    choiceIndex.value = choices.value.indexOfFirst {
+                        it.id == givenChoice.id
+                    }
+                    answers.value = repo.getAnswersForChoice(givenChoice)
+                    answerIndex.value = answers.value.indexOfFirst {
+                        it.id == args.requirement.answer
+                    }
+                } else {
+                    if (choices.value.isNotEmpty()) {
+                        answers.value = repo.getAnswersForChoice(
+                            choices.value[choiceIndex.value]
+                        )
                     }
                 }
+            }
+
+            EditRequirementPage(object : EditRequirementsPageViewModel(
+                parentChoice = navArgs.parentChoice,
+                requirement = args.requirement,
+                choices = choices,
+                choice = choice,
+                selectedAnswerIndexMut = answerIndex,
+                selectedChoiceIndexMut = choiceIndex,
+                answer = answer,
+                answersMut = answers
+            ) {
 
                 override fun allChoices(): List<Choice> {
                     return choices.value
                 }
 
                 override fun answersForChoice(): List<Answer> {
-                    val choice = choice.value
-                    return if (choice != null) {
-                        viewModelScope.launch {
-                            answersMut.value = repo.getAnswersForChoice(choice)
+                    val theChoice = choice.value
+                    viewModelScope.launch {
+                        if (theChoice != null) {
+                            answersMut.value = repo.getAnswersForChoice(theChoice)
                         }
-                        answersMut.value
-                    } else {
-                        emptyList()
                     }
+                    return answersMut.value
                 }
 
                 override fun chooseChoice(index: Int, item: Choice) {
@@ -318,7 +328,6 @@ abstract class AnswerQuestionPageViewModel : ViewModel() {
 fun AnswerQuestionPage(st: AnswerQuestionPageViewModel) {
     st.setupNextQuestion()
     Column {
-        Text(text = "Decision Bot", fontSize = 30.sp)
         if (st.choice.value != null) {
             ChoiceForm(st.choice.value!!, st.answers.value)
         } else {
@@ -402,7 +411,7 @@ fun ListTitle(title: String, newItem: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(text = title, fontSize = 25.sp)
         TextButton(onClick = newItem) {
-            Text(text = "+", fontSize = 25.sp)
+            Icon(Icons.Default.Add, contentDescription = "add")
         }
     }
 }
@@ -439,22 +448,17 @@ fun <Item> EditDeleteBoxList(
 
 abstract class EditRequirementsPageViewModel(
     val parentChoice: Choice,
-    val requirement: Requirement?
+    val requirement: Requirement?,
+    val choices: MutableState<List<Choice>>,
+    val choice: MutableState<Choice?>,
+    val answer: MutableState<Answer?>,
+    val answersMut: MutableState<List<Answer>>,
+    val selectedChoiceIndexMut: MutableState<Int>,
+    val selectedAnswerIndexMut: MutableState<Int>,
 ) : ViewModel() {
-
-    protected val selectedChoiceIndexMut: MutableState<Int> = mutableStateOf(0)
-    protected val selectedAnswerIndexMut: MutableState<Int> = mutableStateOf(0)
-
-    protected val choice: MutableState<Choice?> = mutableStateOf(null)
-    protected val answer: MutableState<Answer?> = mutableStateOf(null)
-
-    protected val choices: MutableState<List<Choice>> = mutableStateOf(emptyList())
-    protected val answersMut: MutableState<List<Answer>> = mutableStateOf(emptyList())
 
     val selectedChoiceIndex: State<Int> = selectedChoiceIndexMut
     val selectedAnswerIndex: State<Int> = selectedAnswerIndexMut
-
-    abstract fun populate()
 
     abstract fun allChoices(): List<Choice>
     abstract fun answersForChoice(): List<Answer>
@@ -478,7 +482,6 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
             Icon(Icons.Default.Done, contentDescription = "save")
         }
     }) { innerPadding ->
-        st.populate()
         remember { st.selectedChoiceIndex }
         remember { st.selectedAnswerIndex }
         Column(modifier = Modifier.padding(innerPadding)) {
@@ -523,7 +526,6 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
 fun ChoiceForm(choice: Choice, answers: List<Answer>) {
     Text(text = choice.prompt, fontSize = 25.sp)
     Column {
-        Text("Options:", fontSize = 30.sp)
         LazyColumn {
             items(answers) { answer ->
                 AnswerField(answer)
