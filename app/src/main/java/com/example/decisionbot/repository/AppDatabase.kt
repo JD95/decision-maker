@@ -8,7 +8,7 @@ import com.example.decisionbot.repository.entity.*
     entities = [
         Choice::class, Answer::class,
         Requirement::class, RequirementBox::class,
-        Decision::class ],
+        ],
     version = 1
 )
 abstract class AppDatabase : RoomDatabase() {

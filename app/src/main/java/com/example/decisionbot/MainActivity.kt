@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalComposeUiApi::class)
+@file:OptIn(ExperimentalComposeUiApi::class, ExperimentalComposeUiApi::class)
 
 package com.example.decisionbot
 
@@ -14,7 +14,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -29,6 +31,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.example.decisionbot.destinations.*
+import com.example.decisionbot.model.DecisionData
 import com.example.decisionbot.repository.AppDao
 import com.example.decisionbot.repository.AppDatabase
 import com.example.decisionbot.repository.AppRepository
@@ -41,16 +44,26 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.manualcomposablecalls.composable
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class MainActivity : ComponentActivity() {
+
+    private val seedingMutex = Mutex()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.i("startup", "Starting up app!")
         val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "data.db")
             .build()
+
         val dao = db.dao()
-        Log.i("startup", "Starting up app!")
         this.lifecycleScope.launch {
-            seedTestDb(dao)
+            if (!seedingMutex.isLocked) {
+                seedingMutex.withLock {
+                    seedTestDb(dao)
+                }
+            }
         }
         setContent {
             DecisionBotTheme {
@@ -68,6 +81,11 @@ class MainActivity : ComponentActivity() {
 
 suspend fun seedTestDb(dao: AppDao) {
     Log.i("startup", "Seeding database!")
+
+    dao.deleteAllChoices()
+    dao.deleteAllAnswers()
+    dao.deleteAllRequirements()
+
     val stayInGoOut = dao.insertChoice("Stay in or go out?")
     val stayIn = dao.insertAnswer(stayInGoOut, "Stay in")
     val goOut = dao.insertAnswer(stayInGoOut, "Go out")
@@ -115,7 +133,7 @@ fun MainComponent(repo: AppRepository) {
                     viewModelScope.launch {
                         answersMut.value = repo.getAnswersForChoice(choice.value)
                         val msg = answersMut.value
-                            .map { "${it.id}: '${it.description}', "}
+                            .map { "${it.id}: '${it.description}', " }
                             .fold("") { x, y -> x.plus(y) }
                         Log.d("getAnswers", "Answers for choice:${choice.value.id} = $msg")
                     }
@@ -180,22 +198,50 @@ fun MainComponent(repo: AppRepository) {
             ChoiceListPage(makeChoiceListViewModel(repo, destinationsNavigator))
         }
         composable(AnswerQuestionPageDestination) {
+            val current = remember { mutableStateOf<DecisionData?>(null) }
+            val resultsMut = remember { mutableStateOf(emptyList<Result>()) }
+            val choices = remember { mutableStateOf(emptyList<DecisionData>()) }
+            val decisions = remember { mutableStateOf(emptyList<Answer>()) }
+
+            LaunchedEffect(Unit) {
+                choices.value = repo.getAllDecisionData()
+                setupNextQuestionForDecision(choices, decisions.value, current)
+            }
+
             AnswerQuestionPage(object : AnswerQuestionPageViewModel() {
-                override fun setupNextQuestion() {
+                override val current: State<DecisionData?>
+                    get() = current
+
+                override fun pick(value: Answer) {
+                    Log.d("pick", "Answer '${value.description}' picked")
                     viewModelScope.launch {
-                        val result = repo.getNextChoiceForDecision()
-                        if (result != null) {
-                            choiceMut.value = result
-                            answersMut.value = repo.getAnswersForChoice(result)
+                        decisions.value = decisions.value.plus(value)
+                        Log.d("pick", "current decisions: ${decisions.value}")
+                        val answered = current.value
+                        if (answered != null) {
+                            choices.value = choices.value.minus(answered)
                         }
+                        Log.d("pick", "current choices: ${choices.value}")
+                        setupNextQuestionForDecision(
+                            choices,
+                            decisions.value,
+                            current
+                        )
                     }
                 }
 
                 override fun getResults(): State<List<Result>> {
                     viewModelScope.launch {
-                        resultsMut.value = repo.getResults()
+                        resultsMut.value = decisions.value.map {
+                            val choice = repo.getChoiceForAnswer(it)
+                            Result(choice.prompt, it.description)
+                        }
                     }
                     return resultsMut
+                }
+
+                override fun resetDecisions() {
+                    destinationsNavigator.navigate(HomePageDestination)
                 }
 
             })
@@ -212,22 +258,43 @@ fun MainComponent(repo: AppRepository) {
 
             LaunchedEffect(scope) {
                 choices.value = repo.getAllChoices().filter { it.id != args.parentChoice.id }
-                if (args.requirement != null) {
-                    val givenChoice = repo.getChoiceForRequirement(args.requirement)
+                val givenChoice = if (args.requirement != null) {
+                    repo.getChoiceForRequirement(args.requirement)
+                } else { choices.value.firstOrNull() }
+                
+                Log.d("edit-requirement", "Choice is '$givenChoice'")
+
+                choice.value = givenChoice
+
+                val givenAnswers = if (givenChoice != null) {
+                    repo.getAnswersForChoice(givenChoice)
+                } else { emptyList() }
+
+                answers.value = givenAnswers
+
+                val givenAnswer = if (args.requirement != null) {
+                    repo.getAnswerForRequirement(args.requirement)
+                } else { givenAnswers.firstOrNull() }
+
+                Log.d("edit-requirement", "Answer is '$givenAnswer'")
+
+                answer.value = givenAnswer
+
+                if (givenChoice != null) {
                     choiceIndex.value = choices.value.indexOfFirst {
                         it.id == givenChoice.id
                     }
-                    answers.value = repo.getAnswersForChoice(givenChoice)
+                }
+
+                Log.d("edit-requirement", "Choice index is '${choiceIndex.value}'")
+
+                if (givenAnswer != null) {
                     answerIndex.value = answers.value.indexOfFirst {
-                        it.id == args.requirement.answer
-                    }
-                } else {
-                    if (choices.value.isNotEmpty()) {
-                        answers.value = repo.getAnswersForChoice(
-                            choices.value[choiceIndex.value]
-                        )
+                        it.id == givenAnswer.id
                     }
                 }
+
+                Log.d("edit-requirement", "Answer index is '${answerIndex.value}'")
             }
 
             EditRequirementPage(object : EditRequirementsPageViewModel(
@@ -246,18 +313,17 @@ fun MainComponent(repo: AppRepository) {
                 }
 
                 override fun answersForChoice(): List<Answer> {
-                    val theChoice = choice.value
-                    viewModelScope.launch {
-                        if (theChoice != null) {
-                            answersMut.value = repo.getAnswersForChoice(theChoice)
-                        }
-                    }
                     return answersMut.value
                 }
 
                 override fun chooseChoice(index: Int, item: Choice) {
                     choice.value = item
                     selectedChoiceIndexMut.value = index
+                    viewModelScope.launch {
+                        answersMut.value = repo.getAnswersForChoice(item)
+                        answer.value = answersMut.value.firstOrNull()
+                        selectedAnswerIndexMut.value = 0
+                    }
                 }
 
                 override fun chooseAnswer(index: Int, item: Answer) {
@@ -288,6 +354,24 @@ fun MainComponent(repo: AppRepository) {
     }
 }
 
+fun setupNextQuestionForDecision(
+    choicesSt: MutableState<List<DecisionData>>,
+    decisions: List<Answer>,
+    current: MutableState<DecisionData?>,
+) {
+    choicesSt.value = choicesSt.value.map {
+        val unsatisfied = it.requirements.filter { r ->
+            decisions.none { a -> a.id == r.answer }
+        }
+        it.copy(requirements = unsatisfied)
+    }
+
+    Log.d("pick", "choices after filter: ${choicesSt.value}")
+
+    current.value = choicesSt.value.find { it.requirements.isEmpty() }
+}
+
+
 fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): ChoiceListViewModel {
     return object : ChoiceListViewModel() {
         override fun getChoices(): List<ListItem<Choice, Unit>> {
@@ -297,7 +381,7 @@ fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): Ch
             return makeListItems(
                 choicesMut,
                 edit = { x -> nav.navigate(EditChoicePageDestination(x.value)) },
-                delete = { viewModelScope.launch {  repo.deleteChoice(it) } },
+                delete = { viewModelScope.launch { repo.deleteChoice(it) } },
             )
         }
 
@@ -307,21 +391,33 @@ fun makeChoiceListViewModel(repo: AppRepository, nav: DestinationsNavigator): Ch
             }
         }
 
+        override fun goHome() {
+            nav.navigate(HomePageDestination)
+        }
     }
 }
 
 @Composable
+@Preview(showBackground = true)
 @Destination(start = true)
 fun HomePage(
-    gotoChoiceListPage: () -> Unit,
-    gotoDecisionPage: () -> Unit
+    gotoChoiceListPage: () -> Unit = { },
+    gotoDecisionPage: () -> Unit = { }
 ) {
-    Column {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Decision", fontSize = 60.sp)
+        Text("Bot", fontSize = 60.sp)
+        Spacer(modifier = Modifier.fillMaxSize(0.5f))
         Button(onClick = { gotoChoiceListPage() }) {
-            Text(text = "Edit Choices")
+            Text(text = "Edit Choices", fontSize = 30.sp)
         }
+        Spacer(modifier = Modifier.fillMaxSize(0.1f))
         Button(onClick = { gotoDecisionPage() }) {
-            Text(text = "Make Decision")
+            Text(text = "Make Decision", fontSize = 30.sp)
         }
     }
 }
@@ -331,40 +427,52 @@ abstract class ChoiceListViewModel : ViewModel() {
     val choices: State<List<Choice>> = choicesMut
     abstract fun getChoices(): List<ListItem<Choice, Unit>>
     abstract fun insertNewChoice(prompt: String)
+    abstract fun goHome()
 }
 
 @Composable
 @Destination
 fun ChoiceListPage(st: ChoiceListViewModel) {
-    Column {
-        ListTitle(title = "Choices") { st.insertNewChoice("New Choice!") }
-        EditDeleteBoxList(st.getChoices()) { requirement ->
-            Text(text = requirement.prompt)
+    Scaffold(floatingActionButton = {
+        FloatingActionButton(onClick = { st.goHome() }) {
+            Icon(Icons.Default.Home, contentDescription = "go home")
+        }
+    }) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding)) {
+            ListTitle(title = "Choices") { st.insertNewChoice("New Choice!") }
+            EditDeleteBoxList(st.getChoices()) { requirement ->
+                Text(text = requirement.prompt)
+            }
         }
     }
 }
 
 abstract class AnswerQuestionPageViewModel : ViewModel() {
-    protected val choiceMut: MutableState<Choice?> = mutableStateOf(null)
-    protected val answersMut: MutableState<List<Answer>> = mutableStateOf(emptyList())
-    protected val resultsMut: MutableState<List<Result>> = mutableStateOf(emptyList())
 
-    val choice: State<Choice?> = choiceMut
-    val answers: State<List<Answer>> = answersMut
-
-    abstract fun setupNextQuestion()
+    abstract val current: State<DecisionData?>
+    abstract fun pick(value: Answer)
     abstract fun getResults(): State<List<Result>>
+
+    abstract fun resetDecisions()
 }
 
 @Composable
 @Destination
 fun AnswerQuestionPage(st: AnswerQuestionPageViewModel) {
-    st.setupNextQuestion()
     Column {
-        if (st.choice.value != null) {
-            ChoiceForm(st.choice.value!!, st.answers.value)
+        val current = st.current.value
+        if (current != null) {
+            ChoiceForm(
+                choice = current.choice,
+                answers = current.answers,
+                pick = { st.pick(it) },
+                random = {
+                    val index = (0 until current.answers.size).random()
+                    st.pick(current.answers[index])
+                }
+            )
         } else {
-            ResultsList(st.getResults().value)
+            ResultsList(st.getResults().value) { st.resetDecisions() }
         }
     }
 }
@@ -511,7 +619,7 @@ fun <Item> EditDeleteBoxList(
     items: List<ListItem<Item, Unit>>,
     displayItem: @Composable (Item) -> Unit,
 ) {
-   EditDeleteBoxList(items) { x, _ -> displayItem(x) }
+    EditDeleteBoxList(items) { x, _ -> displayItem(x) }
 }
 
 @Composable
@@ -616,44 +724,64 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
 }
 
 @Composable
-fun ChoiceForm(choice: Choice, answers: List<Answer>) {
-    Text(text = choice.prompt, fontSize = 25.sp)
-    Column {
-        LazyColumn {
-            items(answers) { answer ->
-                AnswerField(answer)
+@Preview
+fun ChoiceForm(
+    choice: Choice = Choice(1, "Some prompt"),
+    answers: List<Answer> = listOf(
+        Answer(1, 1, "Option 1"),
+        Answer(2, 1, "Option 2")
+    ),
+    pick: (Answer) -> Unit = { _ -> },
+    random: () -> Unit = { }
+) {
+    Scaffold(floatingActionButton = {
+        Button(onClick = { random() }) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.ArrowForward, contentDescription = "choose randomly")
+                Text("chaos")
+            }
+        }
+    }) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(text = choice.prompt, fontSize = 25.sp)
+            Spacer(modifier = Modifier.fillMaxSize(0.25f))
+            LazyColumn {
+                items(answers) { answer ->
+                    Button(onClick = { pick(answer) }) {
+                        Text(text = answer.description, fontSize = 20.sp)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-fun AnswerField(answer: Answer) {
-    Button(onClick = { }) {
-        Text(text = answer.description, fontSize = 20.sp)
-    }
-}
-
-@Composable
-fun ResultsList(decisions: List<Result>) {
-    Text(text = "Your decision has been made!", fontSize = 25.sp)
+fun ResultsList(decisions: List<Result>, resetDecisions: () -> Unit) {
+    Text(text = "Your decision has been made!", fontSize = 40.sp)
+    Spacer(Modifier.height(40.dp))
     Column {
-        Text("Decisions:", fontSize = 20.sp)
+        Text("Decisions:", fontSize = 30.sp)
         LazyColumn {
             items(decisions) { result ->
-                ResultDisplay(result)
+                Text(text = result.prompt, fontSize = 25.sp)
+                Spacer(Modifier.height(10.dp))
+                Text(text = result.answer, fontSize = 25.sp)
+                Spacer(Modifier.height(10.dp))
             }
+        }
+        Button(onClick = resetDecisions) {
+            Text("Reset Decisions", fontSize = 25.sp)
         }
     }
 }
 
-@Composable
-fun ResultDisplay(result: Result) {
-    Column {
-        Text(text = result.prompt)
-        Text(text = result.answer)
-    }
-}
 
 @Preview(showBackground = true)
 @Composable

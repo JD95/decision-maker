@@ -1,39 +1,10 @@
 package com.example.decisionbot.repository
 
 import androidx.room.Query
-import com.example.decisionbot.repository.entity.Answer
-import com.example.decisionbot.repository.entity.Choice
-import com.example.decisionbot.repository.entity.Requirement
-import com.example.decisionbot.repository.entity.RequirementBox
-import com.example.decisionbot.repository.entity.Result
+import com.example.decisionbot.repository.entity.*
 
 @androidx.room.Dao
 interface AppDao {
-    @Query(
-        """
-        with
-          not_answered as (
-            select c.id
-            from choice c
-              left join decision d on c.id = d.id
-            where d.id is null
-        ), choice_status as (
-            select na.id
-                 , min(case when (r.id is null or d.id is not null) then 1 else 0 end) as ready
-            from not_answered as na
-              left join requirement r on na.id = r.choice
-              left join decision d on r.answer = d.answer
-            group by r.id, d.id
-        )
-        select c.id, c.prompt
-        from choice as c
-          join choice_status cs on c.id = cs.id
-        where cs.ready
-        limit 1
-        """
-    )
-    suspend fun getNextChoice(): List<Choice>
-
     @Query(
         """
             select *
@@ -138,14 +109,6 @@ interface AppDao {
 
     @Query(
         """
-            insert into decision (choice, answer)
-            values (:choiceId, :answerId)
-        """
-    )
-    suspend fun insertDecision(choiceId: Long, answerId: Long): Long
-
-    @Query(
-        """
             select *
             from answer
             where answer.choice = :choiceId
@@ -165,16 +128,6 @@ interface AppDao {
 
     @Query(
         """
-            select c.prompt as prompt, a.description as answer
-            from decision d
-              join choice c on d.choice = c.id
-              join answer a on d.answer = a.id
-        """
-    )
-    suspend fun getResults(): List<Result>
-
-    @Query(
-        """
             select r.id, r.choice, r.answer, c.prompt, a.description
             from requirement r
               join answer a on r.answer = a.id
@@ -183,4 +136,33 @@ interface AppDao {
         """
     )
     suspend fun getRequirementBoxFor(choiceId: Long): List<RequirementBox>
+
+    @Query(
+        """
+            delete from choice
+        """
+    )
+    suspend fun deleteAllChoices()
+
+    @Query(
+        """
+            delete from answer 
+        """
+    )
+    suspend fun deleteAllAnswers()
+
+    @Query(
+        """
+            delete from requirement
+        """
+    )
+    suspend fun deleteAllRequirements()
+
+    @Query(
+        """
+            select * from answer
+            where id = :answerId
+        """
+    )
+    suspend fun getAnswer(answerId: Long): Answer
 }

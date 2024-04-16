@@ -1,6 +1,7 @@
 package com.example.decisionbot.repository
 
 import android.util.Log
+import com.example.decisionbot.model.DecisionData
 import com.example.decisionbot.repository.entity.*
 
 class AppRepository(
@@ -58,20 +59,25 @@ class AppRepository(
         dao.deleteRequirement(value.id)
     }
 
-    suspend fun getNextChoiceForDecision(): Choice? {
-        val results = dao.getNextChoice()
-        return if (results.isNotEmpty()) {
-            results[0]
-        } else {
-            null
+    suspend fun deleteChoice(value: Choice) {
+        dao.deleteChoice(value.id)
+    }
+
+    suspend fun getAllDecisionData(): List<DecisionData> {
+        return dao.getAllChoices().map {
+            val answers = dao.getAnswersFor(it.id)
+            val requirements = dao
+                .getRequirementBoxFor(it.id)
+                .map { r -> Requirement(r.id, r.choice, r.answer) }
+            DecisionData(it, answers, requirements)
         }
     }
 
-    suspend fun getResults(): List<Result> {
-        return dao.getResults()
+    suspend fun getChoiceForAnswer(it: Answer): Choice {
+        return dao.getChoice(it.choice)
     }
 
-    suspend fun deleteChoice(value: Choice) {
-        dao.deleteChoice(value.id)
+    suspend fun getAnswerForRequirement(requirement: Requirement): Answer {
+        return dao.getAnswer(requirement.answer)
     }
 }
