@@ -1,4 +1,4 @@
-package com.example.decisionbot.repository.entity
+package com.example.decisionbot.model
 
 import androidx.room.Entity
 
