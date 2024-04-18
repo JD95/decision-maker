@@ -80,4 +80,25 @@ class AppRepository(
     suspend fun getAnswerForRequirement(requirement: Requirement): Answer {
         return dao.getAnswer(requirement.answer)
     }
+    suspend fun seedTestDb() {
+        Log.i("startup", "Seeding database!")
+
+        dao.deleteAllChoices()
+        dao.deleteAllAnswers()
+        dao.deleteAllRequirements()
+
+        val stayInGoOut = dao.insertChoice("Stay in or go out?")
+        val stayIn = dao.insertAnswer(stayInGoOut, "Stay in")
+        val goOut = dao.insertAnswer(stayInGoOut, "Go out")
+
+        val whichBar = dao.insertChoice("Which bar?")
+        dao.insertAnswer(whichBar, "Winston Whiskey")
+        dao.insertAnswer(whichBar, "Tequila Turnaround")
+        dao.insertRequirement(whichBar, goOut)
+
+        val movieOrAnime = dao.insertChoice("Watch a movie or anime?")
+        dao.insertAnswer(movieOrAnime, "Movie")
+        dao.insertAnswer(movieOrAnime, "Anime")
+        dao.insertRequirement(movieOrAnime, stayIn)
+    }
 }

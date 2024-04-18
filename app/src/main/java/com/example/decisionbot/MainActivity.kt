@@ -1,4 +1,6 @@
-@file:OptIn(ExperimentalComposeUiApi::class, ExperimentalComposeUiApi::class)
+@file:OptIn(ExperimentalComposeUiApi::class, ExperimentalComposeUiApi::class,
+    ExperimentalComposeUiApi::class
+)
 
 package com.example.decisionbot
 
@@ -6,6 +8,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,18 +24,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.example.decisionbot.destinations.*
 import com.example.decisionbot.model.DecisionData
-import com.example.decisionbot.repository.AppDao
+import com.example.decisionbot.model.Result
 import com.example.decisionbot.repository.AppDatabase
 import com.example.decisionbot.repository.AppRepository
 import com.example.decisionbot.repository.entity.*
@@ -44,12 +48,8 @@ import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.manualcomposablecalls.composable
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 class MainActivity : ComponentActivity() {
-
-    private val seedingMutex = Mutex()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,13 +58,7 @@ class MainActivity : ComponentActivity() {
             .build()
 
         val dao = db.dao()
-        this.lifecycleScope.launch {
-            if (!seedingMutex.isLocked) {
-                seedingMutex.withLock {
-                    seedTestDb(dao)
-                }
-            }
-        }
+
         setContent {
             DecisionBotTheme {
                 // A surface container using the 'background' color from the theme
@@ -79,27 +73,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-suspend fun seedTestDb(dao: AppDao) {
-    Log.i("startup", "Seeding database!")
-
-    dao.deleteAllChoices()
-    dao.deleteAllAnswers()
-    dao.deleteAllRequirements()
-
-    val stayInGoOut = dao.insertChoice("Stay in or go out?")
-    val stayIn = dao.insertAnswer(stayInGoOut, "Stay in")
-    val goOut = dao.insertAnswer(stayInGoOut, "Go out")
-
-    val whichBar = dao.insertChoice("Which bar?")
-    dao.insertAnswer(whichBar, "Winston Whiskey")
-    dao.insertAnswer(whichBar, "Tequila Turnaround")
-    dao.insertRequirement(whichBar, goOut)
-
-    val movieOrAnime = dao.insertChoice("Watch a movie or anime?")
-    dao.insertAnswer(movieOrAnime, "Movie")
-    dao.insertAnswer(movieOrAnime, "Anime")
-    dao.insertRequirement(movieOrAnime, stayIn)
-}
 
 data class AnswerFieldContext(
     val inEdit: MutableState<Boolean>,
@@ -249,6 +222,8 @@ fun MainComponent(repo: AppRepository) {
         composable(EditRequirementPageDestination) {
             val scope = rememberCoroutineScope()
             val args = this.navArgs
+            val parentChoice = navArgs.parentChoice
+            val requirement = args.requirement
             val answerIndex = remember { mutableStateOf(0) }
             val choiceIndex = remember { mutableStateOf(0) }
             val choices = remember { mutableStateOf<List<Choice>>(emptyList()) }
@@ -260,21 +235,27 @@ fun MainComponent(repo: AppRepository) {
                 choices.value = repo.getAllChoices().filter { it.id != args.parentChoice.id }
                 val givenChoice = if (args.requirement != null) {
                     repo.getChoiceForRequirement(args.requirement)
-                } else { choices.value.firstOrNull() }
-                
+                } else {
+                    choices.value.firstOrNull()
+                }
+
                 Log.d("edit-requirement", "Choice is '$givenChoice'")
 
                 choice.value = givenChoice
 
                 val givenAnswers = if (givenChoice != null) {
                     repo.getAnswersForChoice(givenChoice)
-                } else { emptyList() }
+                } else {
+                    emptyList()
+                }
 
                 answers.value = givenAnswers
 
                 val givenAnswer = if (args.requirement != null) {
                     repo.getAnswerForRequirement(args.requirement)
-                } else { givenAnswers.firstOrNull() }
+                } else {
+                    givenAnswers.firstOrNull()
+                }
 
                 Log.d("edit-requirement", "Answer is '$givenAnswer'")
 
@@ -297,38 +278,34 @@ fun MainComponent(repo: AppRepository) {
                 Log.d("edit-requirement", "Answer index is '${answerIndex.value}'")
             }
 
-            EditRequirementPage(object : EditRequirementsPageViewModel(
-                parentChoice = navArgs.parentChoice,
-                requirement = args.requirement,
-                choices = choices,
-                choice = choice,
-                selectedAnswerIndexMut = answerIndex,
-                selectedChoiceIndexMut = choiceIndex,
-                answer = answer,
-                answersMut = answers
-            ) {
+            EditRequirementPage(object : EditRequirementsPageViewModel() {
+
+                override val selectedChoiceIndex: State<Int>
+                    get() = choiceIndex
+                override val selectedAnswerIndex: State<Int>
+                    get() = answerIndex
 
                 override fun allChoices(): List<Choice> {
                     return choices.value
                 }
 
                 override fun answersForChoice(): List<Answer> {
-                    return answersMut.value
+                    return answers.value
                 }
 
                 override fun chooseChoice(index: Int, item: Choice) {
                     choice.value = item
-                    selectedChoiceIndexMut.value = index
+                    choiceIndex.value = index
                     viewModelScope.launch {
-                        answersMut.value = repo.getAnswersForChoice(item)
-                        answer.value = answersMut.value.firstOrNull()
-                        selectedAnswerIndexMut.value = 0
+                        answers.value = repo.getAnswersForChoice(item)
+                        answer.value = answers.value.firstOrNull()
+                        answerIndex.value = 0
                     }
                 }
 
                 override fun chooseAnswer(index: Int, item: Answer) {
                     answer.value = item
-                    selectedAnswerIndexMut.value = index
+                    answerIndex.value = index
                 }
 
                 override fun close() {
@@ -537,6 +514,7 @@ data class EditChoicePageNavArgs(
     val choice: Choice
 )
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Destination(navArgsDelegate = EditChoicePageNavArgs::class)
 @Composable
 fun EditChoicePage(
@@ -647,19 +625,10 @@ fun <Item, Context> EditDeleteBoxList(
     }
 }
 
-abstract class EditRequirementsPageViewModel(
-    val parentChoice: Choice,
-    val requirement: Requirement?,
-    val choices: MutableState<List<Choice>>,
-    val choice: MutableState<Choice?>,
-    val answer: MutableState<Answer?>,
-    val answersMut: MutableState<List<Answer>>,
-    val selectedChoiceIndexMut: MutableState<Int>,
-    val selectedAnswerIndexMut: MutableState<Int>,
-) : ViewModel() {
+abstract class EditRequirementsPageViewModel() : ViewModel() {
 
-    val selectedChoiceIndex: State<Int> = selectedChoiceIndexMut
-    val selectedAnswerIndex: State<Int> = selectedAnswerIndexMut
+    abstract val selectedChoiceIndex: State<Int>
+    abstract val selectedAnswerIndex: State<Int>
 
     abstract fun allChoices(): List<Choice>
     abstract fun answersForChoice(): List<Answer>
@@ -693,7 +662,7 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
                 items = st.allChoices(),
                 selectedIndex = st.selectedChoiceIndex.value,
                 onItemSelected = st::chooseChoice,
-                selectedItemToString = { it -> it.prompt },
+                selectedItemToString = { it.prompt },
                 drawItem = { item, selected, enabled, onClick ->
                     LargeDropDownMenuItem(
                         text = item.prompt,
@@ -709,7 +678,7 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
                 items = st.answersForChoice(),
                 selectedIndex = st.selectedAnswerIndex.value,
                 onItemSelected = st::chooseAnswer,
-                selectedItemToString = { it -> it.description },
+                selectedItemToString = { it.description },
                 drawItem = { item, selected, enabled, onClick ->
                     LargeDropDownMenuItem(
                         text = item.description,
@@ -763,30 +732,61 @@ fun ChoiceForm(
 }
 
 @Composable
-fun ResultsList(decisions: List<Result>, resetDecisions: () -> Unit) {
-    Text(text = "Your decision has been made!", fontSize = 40.sp)
-    Spacer(Modifier.height(40.dp))
-    Column {
-        Text("Decisions:", fontSize = 30.sp)
-        LazyColumn {
-            items(decisions) { result ->
-                Text(text = result.prompt, fontSize = 25.sp)
-                Spacer(Modifier.height(10.dp))
-                Text(text = result.answer, fontSize = 25.sp)
-                Spacer(Modifier.height(10.dp))
+@Preview
+fun ResultsList(
+    decisions: List<Result> = listOf(
+        Result("Stay in or Go out?", "Stay In"),
+        Result("What are we eating?", "Tacos"),
+        Result("Who's place?", "Mine"),
+        Result("Where are we getting the food?", "Outside"),
+        Result("What movie are we watching?", "Inception"),
+        Result("Are we playing board games?", "Yes"),
+        Result("Which game?", "Catan"),
+    ),
+    goHome: () -> Unit = { }
+) {
+    Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(onClick = { goHome() }) {
+                Icon(Icons.Default.Home, contentDescription = "go home")
             }
         }
-        Button(onClick = resetDecisions) {
-            Text("Reset Decisions", fontSize = 25.sp)
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.fillMaxSize(0.1f))
+            Text("Decisions", fontSize = 50.sp)
+            Spacer(Modifier.fillMaxSize(0.1f))
+            LazyColumn(
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                items(decisions) { result ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .background(color = Color.LightGray)
+                            .padding(vertical = 5.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = result.prompt,
+                            textAlign = TextAlign.Center,
+                            fontSize = 25.sp,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = result.answer,
+                            textAlign = TextAlign.Center,
+                            fontSize = 25.sp,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
         }
-    }
-}
-
-
-@Preview(showBackground = true)
-@Composable
-fun DefaultPreview() {
-    DecisionBotTheme {
-        Text(text = "A decision bot")
     }
 }
