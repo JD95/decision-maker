@@ -1,5 +1,7 @@
 package com.example.decisionbot.repository
 
+import androidx.room.Delete
+import androidx.room.Insert
 import androidx.room.Query
 import com.example.decisionbot.repository.entity.*
 
@@ -13,13 +15,8 @@ interface AppDao {
     )
     suspend fun getAllChoices(): List<Choice>
 
-    @Query(
-        """
-            insert into choice (prompt)
-            values (:prompt)
-        """
-    )
-    suspend fun insertChoice(prompt: String): Long
+    @Insert
+    suspend fun insertChoice(choice: Choice)
 
     @Query(
         """
@@ -28,7 +25,7 @@ interface AppDao {
             where id = :choiceId
         """
     )
-    suspend fun getChoice(choiceId: Long): Choice
+    suspend fun getChoice(choiceId: String): Choice
 
     @Query(
         """
@@ -37,23 +34,13 @@ interface AppDao {
             where id = :choiceId
         """
     )
-    suspend fun updateChoice(choiceId: Long, prompt: String)
+    suspend fun updateChoice(choiceId: String, prompt: String)
 
-    @Query(
-        """
-            delete from choice
-            where id = :choiceId
-        """
-    )
-    suspend fun deleteChoice(choiceId: Long)
+    @Delete
+    suspend fun deleteChoice(choice: Choice)
 
-    @Query(
-        """
-            insert into answer (choice, description)
-            values (:choiceId, :description)
-        """
-    )
-    suspend fun insertAnswer(choiceId: Long, description: String): Long
+    @Insert
+    suspend fun insertAnswer(answer: Answer)
 
     @Query(
         """
@@ -62,23 +49,13 @@ interface AppDao {
             where id = :answerId
         """
     )
-    suspend fun updateAnswer(answerId: Long, description: String)
+    suspend fun updateAnswer(answerId: String, description: String)
 
-    @Query(
-        """
-            delete from answer
-            where id = :answerId
-        """
-    )
-    suspend fun deleteAnswer(answerId: Long)
+    @Delete
+    suspend fun deleteAnswer(answer: Answer)
 
-    @Query(
-        """
-            insert into requirement (choice, answer)
-            values (:choiceId, :answerId)
-        """
-    )
-    suspend fun insertRequirement(choiceId: Long, answerId: Long): Long
+    @Insert
+    suspend fun insertRequirement(requirement: Requirement)
 
     @Query(
         """
@@ -87,7 +64,7 @@ interface AppDao {
             where id = :requirementId
         """
     )
-    suspend fun getRequirement(requirementId: Long): Requirement
+    suspend fun getRequirement(requirementId: String): Requirement
 
     @Query(
         """
@@ -97,15 +74,10 @@ interface AppDao {
             where id = :requirementId
         """
     )
-    suspend fun updateRequirement(requirementId: Long, choiceId: Long, answerId: Long)
+    suspend fun updateRequirement(requirementId: String, choiceId: String, answerId: String)
 
-    @Query(
-        """
-            delete from requirement
-            where id = :requirementId
-        """
-    )
-    suspend fun deleteRequirement(requirementId: Long)
+    @Delete
+    suspend fun deleteRequirement(requirement: Requirement)
 
     @Query(
         """
@@ -114,7 +86,7 @@ interface AppDao {
             where answer.choice = :choiceId
         """
     )
-    suspend fun getAnswersFor(choiceId: Long): List<Answer>
+    suspend fun getAnswersFor(choiceId: String): List<Answer>
 
     @Query(
         """
@@ -124,7 +96,7 @@ interface AppDao {
             where a.id = :answerId
         """
     )
-    suspend fun getChoiceForAnswer(answerId: Long): Choice
+    suspend fun getChoiceForAnswer(answerId: String): Choice
 
     @Query(
         """
@@ -135,7 +107,7 @@ interface AppDao {
             where r.choice = :choiceId
         """
     )
-    suspend fun getRequirementBoxFor(choiceId: Long): List<RequirementBox>
+    suspend fun getRequirementBoxFor(choiceId: String): List<RequirementBox>
 
     @Query(
         """
@@ -160,9 +132,9 @@ interface AppDao {
 
     @Query(
         """
-            select * from answer
+            select id, choice, description from answer
             where id = :answerId
         """
     )
-    suspend fun getAnswer(answerId: Long): Answer
+    suspend fun getAnswer(answerId: String): Answer
 }

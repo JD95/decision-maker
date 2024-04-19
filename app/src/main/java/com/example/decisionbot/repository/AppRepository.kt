@@ -3,6 +3,7 @@ package com.example.decisionbot.repository
 import android.util.Log
 import com.example.decisionbot.model.DecisionData
 import com.example.decisionbot.repository.entity.*
+import java.util.*
 
 class AppRepository(
     private val dao: AppDao
@@ -12,8 +13,9 @@ class AppRepository(
     }
 
     suspend fun insertChoice(prompt: String): Choice {
-        val id = dao.insertChoice(prompt)
-        return Choice(id, prompt)
+        val new = Choice(UUID.randomUUID().toString(), prompt)
+        dao.insertChoice(new)
+        return new
     }
 
     suspend fun editChoice(value: Choice) {
@@ -25,8 +27,9 @@ class AppRepository(
     }
 
     suspend fun insertAnswer(choice: Choice, description: String): Answer {
-        val id = dao.insertAnswer(choice.id, description)
-        return Answer(id, choice.id, description)
+        val new = Answer(UUID.randomUUID().toString(), choice.id, description)
+        dao.insertAnswer(new)
+        return new
     }
 
     suspend fun editAnswer(answer: Answer) {
@@ -35,12 +38,13 @@ class AppRepository(
     }
 
     suspend fun deleteAnswer(answer: Answer) {
-        dao.deleteAnswer(answer.id)
+        dao.deleteAnswer(answer)
     }
 
     suspend fun insertRequirement(choice: Choice, answer: Answer): Requirement {
-        val id = dao.insertRequirement(choice.id, answer.id)
-        return Requirement(id, choice.id, answer.id)
+        val new = Requirement(UUID.randomUUID().toString(), choice.id, answer.id)
+        dao.insertRequirement(new)
+        return new
     }
 
     suspend fun editRequirement(requirement: Requirement) {
@@ -56,11 +60,11 @@ class AppRepository(
     }
 
     suspend fun deleteRequirementBox(value: RequirementBox) {
-        dao.deleteRequirement(value.id)
+        dao.deleteRequirement(Requirement(value.id, value.choice, value.answer))
     }
 
     suspend fun deleteChoice(value: Choice) {
-        dao.deleteChoice(value.id)
+        dao.deleteChoice(value)
     }
 
     suspend fun getAllDecisionData(): List<DecisionData> {
@@ -79,26 +83,5 @@ class AppRepository(
 
     suspend fun getAnswerForRequirement(requirement: Requirement): Answer {
         return dao.getAnswer(requirement.answer)
-    }
-    suspend fun seedTestDb() {
-        Log.i("startup", "Seeding database!")
-
-        dao.deleteAllChoices()
-        dao.deleteAllAnswers()
-        dao.deleteAllRequirements()
-
-        val stayInGoOut = dao.insertChoice("Stay in or go out?")
-        val stayIn = dao.insertAnswer(stayInGoOut, "Stay in")
-        val goOut = dao.insertAnswer(stayInGoOut, "Go out")
-
-        val whichBar = dao.insertChoice("Which bar?")
-        dao.insertAnswer(whichBar, "Winston Whiskey")
-        dao.insertAnswer(whichBar, "Tequila Turnaround")
-        dao.insertRequirement(whichBar, goOut)
-
-        val movieOrAnime = dao.insertChoice("Watch a movie or anime?")
-        dao.insertAnswer(movieOrAnime, "Movie")
-        dao.insertAnswer(movieOrAnime, "Anime")
-        dao.insertRequirement(movieOrAnime, stayIn)
     }
 }

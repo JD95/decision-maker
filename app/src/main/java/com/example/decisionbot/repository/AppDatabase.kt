@@ -9,7 +9,9 @@ import com.example.decisionbot.repository.entity.*
         Choice::class, Answer::class,
         Requirement::class, RequirementBox::class,
         ],
-    version = 1
+    version = 1,
+    autoMigrations = [ ],
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): AppDao

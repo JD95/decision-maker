@@ -625,7 +625,7 @@ fun <Item, Context> EditDeleteBoxList(
     }
 }
 
-abstract class EditRequirementsPageViewModel() : ViewModel() {
+abstract class EditRequirementsPageViewModel : ViewModel() {
 
     abstract val selectedChoiceIndex: State<Int>
     abstract val selectedAnswerIndex: State<Int>
@@ -695,10 +695,10 @@ fun EditRequirementPage(st: EditRequirementsPageViewModel) {
 @Composable
 @Preview
 fun ChoiceForm(
-    choice: Choice = Choice(1, "Some prompt"),
+    choice: Choice = Choice("a", "Some prompt"),
     answers: List<Answer> = listOf(
-        Answer(1, 1, "Option 1"),
-        Answer(2, 1, "Option 2")
+        Answer("b", "a", "Option 1"),
+        Answer("b", "a", "Option 2")
     ),
     pick: (Answer) -> Unit = { _ -> },
     random: () -> Unit = { }

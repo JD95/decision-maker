@@ -1,22 +1,22 @@
 package com.example.decisionbot.repository.entity
 
-import androidx.room.ColumnInfo
-import androidx.room.Entity
-import androidx.room.ForeignKey
-import androidx.room.PrimaryKey
+import androidx.room.*
 
 @Entity(
     foreignKeys = [
         ForeignKey(
             entity = Choice::class,
             parentColumns = arrayOf("id"),
-            childColumns = arrayOf("id"),
+            childColumns = arrayOf("choice"),
             onDelete = ForeignKey.CASCADE
         )
+    ],
+    indices = [
+        Index(value = ["choice"])
     ]
 )
 data class Answer(
-    @PrimaryKey val id: Long,
-    @ColumnInfo(name = "choice") val choice: Long,
+    @PrimaryKey val id: String,
+    @ColumnInfo(name = "choice") val choice: String,
     @ColumnInfo(name = "description") val description: String,
 )

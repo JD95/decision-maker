@@ -6,9 +6,9 @@ import androidx.room.PrimaryKey
 @Entity
 data class RequirementBox(
     @PrimaryKey
-    val id: Long,
-    val choice: Long,
-    val answer: Long,
+    val id: String,
+    val choice: String,
+    val answer: String,
     val prompt: String,
     val description: String
 )

@@ -1,9 +1,6 @@
 package com.example.decisionbot.repository.entity
 
-import androidx.room.ColumnInfo
-import androidx.room.Entity
-import androidx.room.ForeignKey
-import androidx.room.PrimaryKey
+import androidx.room.*
 
 @Entity(
     foreignKeys = [
@@ -19,11 +16,15 @@ import androidx.room.PrimaryKey
             childColumns = arrayOf("answer"),
             onDelete = ForeignKey.CASCADE
         ),
+    ],
+    indices = [
+        Index(value = ["choice"]),
+        Index(value = ["answer"])
     ]
 )
 @kotlinx.serialization.Serializable
 data class Requirement(
-    @PrimaryKey val id: Long,
-    @ColumnInfo(name = "choice") val choice: Long,
-    @ColumnInfo(name = "answer") val answer: Long,
+    @PrimaryKey val id: String,
+    @ColumnInfo(name = "choice") val choice: String,
+    @ColumnInfo(name = "answer") val answer: String,
 )
