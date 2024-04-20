@@ -6,15 +6,15 @@ plugins {
 }
 
 android {
-    namespace 'com.example.decisionbot'
+    namespace 'com.wspcgir.decisionbot'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.example.decisionbot"
+        applicationId "com.wspcgir.decisionbot"
         minSdk 34
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 4
+        versionName "0.1.4"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
