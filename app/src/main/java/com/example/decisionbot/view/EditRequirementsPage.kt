@@ -140,6 +140,34 @@ fun MakeEditRequirementsPage(
     })
 }
 
+class EditRequirementsPagePreview : EditRequirementsPageViewModel() {
+    override val selectedChoiceIndex: State<Int>
+        get() = mutableStateOf(0)
+    override val selectedAnswerIndex: State<Int>
+        get() = mutableStateOf(0)
+
+    override fun allChoices(): List<Choice> {
+        return listOf(
+            Choice("a", "Foo")
+        )
+    }
+
+    override fun answersForChoice(): List<Answer> {
+        return listOf(
+            Answer("bleh", "a", "A choice")
+        )
+    }
+
+    override fun chooseChoice(index: Int, item: Choice) {
+    }
+
+    override fun chooseAnswer(index: Int, item: Answer) {
+    }
+
+    override fun close() {
+    }
+}
+
 abstract class EditRequirementsPageViewModel : ViewModel() {
 
     abstract val selectedChoiceIndex: State<Int>
@@ -161,7 +189,8 @@ data class EditRequirementPageNavArgs(
 
 @Composable
 @Destination(navArgsDelegate = EditRequirementPageNavArgs::class)
-fun EditRequirementPage(st: EditRequirementsPageViewModel) {
+@androidx.compose.ui.tooling.preview.Preview
+fun EditRequirementPage(st: EditRequirementsPageViewModel = EditRequirementsPagePreview()) {
     Scaffold(floatingActionButton = {
         FloatingActionButton(onClick = { st.close() }) {
             Icon(Icons.Default.Done, contentDescription = "save")
